@@ -1,1 +1,1 @@
-ont-infra — ONT Infra Operator. See ont-infra-design.md for architecture.
+wrapper — ONT Infra Operator. See wrapper-design.md for architecture.
