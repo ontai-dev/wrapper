@@ -35,3 +35,8 @@ Thumbs.db
 # Constitutional documents — not committed to component repos
 CLAUDE.md
 AGENTS.md
+
+# Markdown: only README and schema documents are tracked
+*.md
+!README.md
+!*-schema.md
