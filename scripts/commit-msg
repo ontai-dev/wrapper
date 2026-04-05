@@ -1,0 +1,16 @@
+#!/bin/sh
+# commit-msg: reject commit messages containing Co-Authored-By trailers.
+#
+# Co-Authored-By lines are added by AI coding assistants and are explicitly
+# prohibited by the Seam Platform Constitution (CONTEXT.md §0 Anti-Patterns).
+# The sole author on all Seam Platform commits is ontave <ontave@ontave.dev>.
+#
+# Installed by: make install-hooks
+# Applied to:   all six Seam Platform repositories
+
+if grep -qiE '^Co-Authored-By:|^Co-authored-by:' "$1"; then
+    echo "REJECT: Co-Authored-By trailer detected in commit message." >&2
+    echo "        Remove the Co-Authored-By line and retry." >&2
+    echo "        (Seam Platform Constitution — CONTEXT.md §0 Anti-Patterns)" >&2
+    exit 1
+fi
