@@ -69,7 +69,7 @@ const (
 	kubeconfigSecretNamespace = "ont-system"
 )
 
-// PackExecutionReconciler watches PackExecution CRs and manages the 4-gate check
+// PackExecutionReconciler watches PackExecution CRs and manages the 5-gate check
 // and pack-deploy Job lifecycle.
 //
 // Reconcile loop:
@@ -79,14 +79,20 @@ const (
 //  4. Initialize LineageSynced on first observation.
 //  5. If Succeeded=True, stop (terminal state).
 //  6. If PackRevoked=True, stop (no requeue, human intervention required).
-//  7. Run 4-gate check in order:
-//     a. Signature gate — ClusterPack.status.Signed=true
-//     b. Revocation gate — ClusterPack conditions Revoked != True
-//     c. PermissionSnapshot gate — target cluster snapshot current
-//     d. RBACProfile gate — admissionProfileRef provisioned=true
+//  7. Run 5-gate check in order:
+//     gate 0. ConductorReady gate — target cluster TalosCluster.ConductorReady=True
+//     gate 1. Signature gate — ClusterPack.status.Signed=true
+//     gate 2. Revocation gate — ClusterPack conditions Revoked != True
+//     gate 3. PermissionSnapshot gate — target cluster snapshot current
+//     gate 4. RBACProfile gate — admissionProfileRef provisioned=true
 //  8. Check for existing Job; if running, update Running condition and requeue.
 //  9. Read OperationResult ConfigMap; if present, mark Succeeded.
 //  10. Submit pack-deploy Job via Kueue.
+//
+// Gate 0 is checked first because ConductorReady is a cluster-level prerequisite,
+// not a pack-level prerequisite. A cluster without an Available Conductor cannot
+// safely receive any pack delivery regardless of pack signature or RBAC state.
+// platform-schema.md §12, Gap 27.
 type PackExecutionReconciler struct {
 	Client   client.Client
 	Scheme   *runtime.Scheme
@@ -156,7 +162,50 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, nil
 	}
 
-	// Step G — 4-gate check. All gates must pass before Job submission.
+	// Step G — 5-gate check. All gates must pass before Job submission.
+	// Gate 0: ConductorReady gate — cluster-level prerequisite checked first.
+	// Reads the TalosCluster for the target cluster from seam-tenant-{clusterRef}
+	// namespace and verifies that ConductorReady=True. If absent or False, the
+	// cluster's Conductor agent is not yet Available and pack delivery is unsafe.
+	// platform-schema.md §12 Conductor Deployment Contract. Gap 27.
+	conductorReady, err := r.isConductorReadyForCluster(ctx, pe)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to check ConductorReady for cluster %s: %w",
+			pe.Spec.TargetClusterRef, err)
+	}
+	if !conductorReady {
+		infrav1alpha1.SetCondition(
+			&pe.Status.Conditions,
+			infrav1alpha1.ConditionTypePackExecutionWaiting,
+			metav1.ConditionTrue,
+			infrav1alpha1.ReasonAwaitingConductorReady,
+			fmt.Sprintf("Target cluster %q TalosCluster does not yet have ConductorReady=True. "+
+				"Waiting for the Conductor agent Deployment to become Available.",
+				pe.Spec.TargetClusterRef),
+			pe.Generation,
+		)
+		infrav1alpha1.SetCondition(
+			&pe.Status.Conditions,
+			infrav1alpha1.ConditionTypePackExecutionPending,
+			metav1.ConditionTrue,
+			infrav1alpha1.ReasonGatesClearing,
+			"Waiting for ConductorReady gate (gate 0).",
+			pe.Generation,
+		)
+		logger.Info("PackExecution gate 0 (ConductorReady) not cleared — requeueing",
+			"name", pe.Name, "cluster", pe.Spec.TargetClusterRef)
+		return ctrl.Result{RequeueAfter: gateRequeueInterval}, nil
+	}
+	// Gate 0 cleared — clear the Waiting condition if set.
+	infrav1alpha1.SetCondition(
+		&pe.Status.Conditions,
+		infrav1alpha1.ConditionTypePackExecutionWaiting,
+		metav1.ConditionFalse,
+		infrav1alpha1.ReasonAwaitingConductorReady,
+		"ConductorReady gate cleared.",
+		pe.Generation,
+	)
+
 	// Gate 1: Signature gate.
 	cp := &infrav1alpha1.ClusterPack{}
 	cpKey := client.ObjectKey{Name: pe.Spec.ClusterPackRef.Name, Namespace: pe.Namespace}
@@ -490,6 +539,51 @@ func (r *PackExecutionReconciler) isRBACProfileProvisioned(ctx context.Context, 
 		return false, nil
 	}
 	return provisioned, nil
+}
+
+// isConductorReadyForCluster reads the TalosCluster CR for the target cluster via
+// unstructured (to avoid importing platform types) and checks whether the
+// ConductorReady condition has status=True. Returns (true, nil) when ConductorReady=True,
+// (false, nil) when the TalosCluster is not found, the condition is absent, or the
+// condition is False. Returns (false, err) only for unexpected API errors.
+//
+// The TalosCluster for a target cluster lives in seam-tenant-{clusterRef} namespace.
+// platform-schema.md §12, Gap 27.
+func (r *PackExecutionReconciler) isConductorReadyForCluster(ctx context.Context, pe *infrav1alpha1.PackExecution) (bool, error) {
+	tenantNS := "seam-tenant-" + pe.Spec.TargetClusterRef
+	tc := &unstructured.Unstructured{}
+	tc.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "platform.ontai.dev",
+		Version: "v1alpha1",
+		Kind:    "TalosCluster",
+	})
+	tcKey := types.NamespacedName{
+		Name:      pe.Spec.TargetClusterRef,
+		Namespace: tenantNS,
+	}
+	if err := r.Client.Get(ctx, tcKey, tc); err != nil {
+		if apierrors.IsNotFound(err) {
+			// TalosCluster not yet present — not an error, not ready.
+			return false, nil
+		}
+		return false, err
+	}
+
+	// Walk status.conditions looking for ConductorReady=True.
+	conditions, found, err := unstructured.NestedSlice(tc.Object, "status", "conditions")
+	if err != nil || !found {
+		return false, nil
+	}
+	for _, raw := range conditions {
+		cond, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if cond["type"] == "ConductorReady" && cond["status"] == "True" {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // buildPackDeployJob constructs the pack-deploy Job spec for Kueue admission.

@@ -110,6 +110,33 @@ func newRBACProfile(name, namespace string, provisioned bool) *unstructured.Unst
 	return rp
 }
 
+// newTalosClusterWithConductorReady creates a fake TalosCluster unstructured object
+// in seam-tenant-{clusterName} with the given ConductorReady condition status.
+// Used to satisfy gate 0 in PackExecutionReconciler tests. Gap 27.
+func newTalosClusterWithConductorReady(clusterName string, conductorReady bool) *unstructured.Unstructured {
+	tc := &unstructured.Unstructured{}
+	tc.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "platform.ontai.dev",
+		Version: "v1alpha1",
+		Kind:    "TalosCluster",
+	})
+	tc.SetName(clusterName)
+	tc.SetNamespace("seam-tenant-" + clusterName)
+
+	condStatus := "False"
+	if conductorReady {
+		condStatus = "True"
+	}
+	_ = unstructured.SetNestedSlice(tc.Object, []interface{}{
+		map[string]interface{}{
+			"type":   "ConductorReady",
+			"status": condStatus,
+			"reason": "ConductorDeploymentAvailable",
+		},
+	}, "status", "conditions")
+	return tc
+}
+
 func reconcilePE(t *testing.T, r *controller.PackExecutionReconciler, pe *infrav1alpha1.PackExecution) ctrl.Result {
 	t.Helper()
 	result, err := r.Reconcile(context.Background(), ctrl.Request{
@@ -122,16 +149,21 @@ func reconcilePE(t *testing.T, r *controller.PackExecutionReconciler, pe *infrav
 }
 
 // TestPackExecutionReconciler_Gate1_SignaturePending verifies gate 1 requeues when
-// the ClusterPack is not yet signed.
+// the ClusterPack is not yet signed (gate 0 already cleared via ConductorReady=True).
 func TestPackExecutionReconciler_Gate1_SignaturePending(t *testing.T) {
 	s := newPackExecutionScheme(t)
 	cp := newClusterPack("my-pack", "infra-system", "v1.0.0")
 	pe := newPackExecution("exec-1", "infra-system", "my-pack", "v1.0.0", "cluster-a", "profile-a")
+	// ConductorReady=True satisfies gate 0 so gate 1 is the first to block.
+	tc := newTalosClusterWithConductorReady("cluster-a", true)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
 		WithStatusSubresource(&infrav1alpha1.PackExecution{}, &infrav1alpha1.ClusterPack{}).
 		Build()
+	if err := fakeClient.Create(context.Background(), tc); err != nil {
+		t.Fatalf("create TalosCluster: %v", err)
+	}
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
@@ -169,11 +201,16 @@ func TestPackExecutionReconciler_Gate2_PackRevoked(t *testing.T) {
 		},
 	}
 	pe := newPackExecution("exec-revoked", "infra-system", "my-pack", "v1.0.0", "cluster-a", "profile-a")
+	// ConductorReady=True satisfies gate 0 so gate 2 is the first to block.
+	tc := newTalosClusterWithConductorReady("cluster-a", true)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
 		WithStatusSubresource(&infrav1alpha1.PackExecution{}, &infrav1alpha1.ClusterPack{}).
 		Build()
+	if err := fakeClient.Create(context.Background(), tc); err != nil {
+		t.Fatalf("create TalosCluster: %v", err)
+	}
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
@@ -204,6 +241,8 @@ func TestPackExecutionReconciler_Gate3_SnapshotOutOfSync(t *testing.T) {
 	pe := newPackExecution("exec-snap", "infra-system", "my-pack", "v1.0.0", "cluster-a", "profile-a")
 	ps := newPermissionSnapshot("cluster-a", "infra-system", false)
 	profile := newRBACProfile("profile-a", "infra-system", true)
+	// ConductorReady=True satisfies gate 0 so gate 3 is the first to block.
+	tc := newTalosClusterWithConductorReady("cluster-a", true)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe, profile).
@@ -212,6 +251,9 @@ func TestPackExecutionReconciler_Gate3_SnapshotOutOfSync(t *testing.T) {
 	// Add unstructured PermissionSnapshot.
 	if err := fakeClient.Create(context.Background(), ps); err != nil {
 		t.Fatalf("create PermissionSnapshot: %v", err)
+	}
+	if err := fakeClient.Create(context.Background(), tc); err != nil {
+		t.Fatalf("create TalosCluster: %v", err)
 	}
 
 	r := &controller.PackExecutionReconciler{
@@ -244,6 +286,8 @@ func TestPackExecutionReconciler_Gate4_RBACProfileNotProvisioned(t *testing.T) {
 	pe := newPackExecution("exec-rbac", "infra-system", "my-pack", "v1.0.0", "cluster-a", "profile-a")
 	ps := newPermissionSnapshot("cluster-a", "infra-system", true)
 	profile := newRBACProfile("profile-a", "infra-system", false)
+	// ConductorReady=True satisfies gate 0 so gate 4 is the first to block.
+	tc := newTalosClusterWithConductorReady("cluster-a", true)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe, profile).
@@ -251,6 +295,9 @@ func TestPackExecutionReconciler_Gate4_RBACProfileNotProvisioned(t *testing.T) {
 		Build()
 	if err := fakeClient.Create(context.Background(), ps); err != nil {
 		t.Fatalf("create PermissionSnapshot: %v", err)
+	}
+	if err := fakeClient.Create(context.Background(), tc); err != nil {
+		t.Fatalf("create TalosCluster: %v", err)
 	}
 
 	r := &controller.PackExecutionReconciler{
@@ -276,13 +323,16 @@ func TestPackExecutionReconciler_Gate4_RBACProfileNotProvisioned(t *testing.T) {
 }
 
 // TestPackExecutionReconciler_AllGatesClear_JobSubmitted verifies that when all
-// four gates pass, a pack-deploy Job is submitted with the Kueue queue label.
+// five gates pass (gate 0: ConductorReady + gates 1-4), a pack-deploy Job is
+// submitted with the Kueue queue label. Gap 27.
 func TestPackExecutionReconciler_AllGatesClear_JobSubmitted(t *testing.T) {
 	s := newPackExecutionScheme(t)
 	cp := newSignedClusterPack("my-pack", "infra-system", "v1.0.0")
 	pe := newPackExecution("exec-submit", "infra-system", "my-pack", "v1.0.0", "cluster-a", "profile-a")
 	ps := newPermissionSnapshot("cluster-a", "infra-system", true)
 	profile := newRBACProfile("profile-a", "infra-system", true)
+	// TalosCluster with ConductorReady=True satisfies gate 0.
+	tc := newTalosClusterWithConductorReady("cluster-a", true)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe, profile).
@@ -290,6 +340,9 @@ func TestPackExecutionReconciler_AllGatesClear_JobSubmitted(t *testing.T) {
 		Build()
 	if err := fakeClient.Create(context.Background(), ps); err != nil {
 		t.Fatalf("create PermissionSnapshot: %v", err)
+	}
+	if err := fakeClient.Create(context.Background(), tc); err != nil {
+		t.Fatalf("create TalosCluster: %v", err)
 	}
 
 	r := &controller.PackExecutionReconciler{
@@ -369,5 +422,137 @@ func TestPackExecutionReconciler_LineageSyncedInitialized(t *testing.T) {
 	}
 	if lineageCond.Status != metav1.ConditionFalse {
 		t.Errorf("expected LineageSynced=False, got %v", lineageCond.Status)
+	}
+}
+
+// --- ConductorReady gate (gate 0) tests --- Gap 27
+
+// TestPackExecutionReconciler_Gate0_ConductorReadyAbsent verifies that when the
+// target cluster's TalosCluster does not exist in seam-tenant-{clusterRef}, gate 0
+// blocks Job submission, sets Waiting condition, and requeues.
+func TestPackExecutionReconciler_Gate0_ConductorReadyAbsent(t *testing.T) {
+	s := newPackExecutionScheme(t)
+	cp := newSignedClusterPack("my-pack", "infra-system", "v1.0.0")
+	pe := newPackExecution("exec-gate0-absent", "infra-system", "my-pack", "v1.0.0", "cluster-b", "profile-b")
+	// No TalosCluster for cluster-b in the fake client.
+
+	fakeClient := fake.NewClientBuilder().WithScheme(s).
+		WithObjects(cp, pe).
+		WithStatusSubresource(&infrav1alpha1.PackExecution{}, &infrav1alpha1.ClusterPack{}).
+		Build()
+	r := &controller.PackExecutionReconciler{
+		Client:   fakeClient,
+		Scheme:   s,
+		Recorder: record.NewFakeRecorder(10),
+	}
+
+	result := reconcilePE(t, r, pe)
+
+	// Gate 0 must cause a requeue.
+	if result.RequeueAfter != 30*time.Second {
+		t.Errorf("expected RequeueAfter=30s for ConductorReady gate, got %v", result.RequeueAfter)
+	}
+
+	updated := &infrav1alpha1.PackExecution{}
+	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pe), updated); err != nil {
+		t.Fatalf("get updated PackExecution: %v", err)
+	}
+	waitingCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionWaiting)
+	if waitingCond == nil || waitingCond.Status != metav1.ConditionTrue {
+		t.Errorf("expected Waiting=True when TalosCluster absent")
+	}
+	if waitingCond.Reason != infrav1alpha1.ReasonAwaitingConductorReady {
+		t.Errorf("expected reason %q, got %q",
+			infrav1alpha1.ReasonAwaitingConductorReady, waitingCond.Reason)
+	}
+}
+
+// TestPackExecutionReconciler_Gate0_ConductorReadyFalse verifies that when the
+// target cluster's TalosCluster has ConductorReady=False, gate 0 blocks Job
+// submission, sets Waiting condition, and requeues.
+func TestPackExecutionReconciler_Gate0_ConductorReadyFalse(t *testing.T) {
+	s := newPackExecutionScheme(t)
+	cp := newSignedClusterPack("my-pack", "infra-system", "v1.0.0")
+	pe := newPackExecution("exec-gate0-false", "infra-system", "my-pack", "v1.0.0", "cluster-b", "profile-b")
+	// TalosCluster exists but ConductorReady=False.
+	tc := newTalosClusterWithConductorReady("cluster-b", false)
+
+	fakeClient := fake.NewClientBuilder().WithScheme(s).
+		WithObjects(cp, pe).
+		WithStatusSubresource(&infrav1alpha1.PackExecution{}, &infrav1alpha1.ClusterPack{}).
+		Build()
+	if err := fakeClient.Create(context.Background(), tc); err != nil {
+		t.Fatalf("create TalosCluster: %v", err)
+	}
+
+	r := &controller.PackExecutionReconciler{
+		Client:   fakeClient,
+		Scheme:   s,
+		Recorder: record.NewFakeRecorder(10),
+	}
+
+	result := reconcilePE(t, r, pe)
+
+	if result.RequeueAfter != 30*time.Second {
+		t.Errorf("expected RequeueAfter=30s for ConductorReady gate (False), got %v", result.RequeueAfter)
+	}
+
+	updated := &infrav1alpha1.PackExecution{}
+	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pe), updated); err != nil {
+		t.Fatalf("get updated PackExecution: %v", err)
+	}
+	waitingCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionWaiting)
+	if waitingCond == nil || waitingCond.Status != metav1.ConditionTrue {
+		t.Errorf("expected Waiting=True when ConductorReady=False")
+	}
+}
+
+// TestPackExecutionReconciler_Gate0_ConductorReadyTrue_ProceedsToSignatureGate
+// verifies that when ConductorReady=True on the target TalosCluster, gate 0 clears
+// and the reconciler proceeds to gate 1 (signature). The Waiting condition is cleared.
+func TestPackExecutionReconciler_Gate0_ConductorReadyTrue_ProceedsToSignatureGate(t *testing.T) {
+	s := newPackExecutionScheme(t)
+	// Use an unsigned ClusterPack so gate 1 (signature) blocks after gate 0 passes.
+	cp := newClusterPack("my-pack", "infra-system", "v1.0.0")
+	pe := newPackExecution("exec-gate0-true", "infra-system", "my-pack", "v1.0.0", "cluster-c", "profile-c")
+	// TalosCluster with ConductorReady=True — gate 0 passes.
+	tc := newTalosClusterWithConductorReady("cluster-c", true)
+
+	fakeClient := fake.NewClientBuilder().WithScheme(s).
+		WithObjects(cp, pe).
+		WithStatusSubresource(&infrav1alpha1.PackExecution{}, &infrav1alpha1.ClusterPack{}).
+		Build()
+	if err := fakeClient.Create(context.Background(), tc); err != nil {
+		t.Fatalf("create TalosCluster: %v", err)
+	}
+
+	r := &controller.PackExecutionReconciler{
+		Client:   fakeClient,
+		Scheme:   s,
+		Recorder: record.NewFakeRecorder(10),
+	}
+
+	result := reconcilePE(t, r, pe)
+
+	// Gate 0 passed, gate 1 (signature) blocked with 15s requeue.
+	if result.RequeueAfter != 15*time.Second {
+		t.Errorf("expected RequeueAfter=15s (signature gate), got %v — gate 0 may not have cleared", result.RequeueAfter)
+	}
+
+	updated := &infrav1alpha1.PackExecution{}
+	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pe), updated); err != nil {
+		t.Fatalf("get updated PackExecution: %v", err)
+	}
+
+	// Waiting condition must be False (gate 0 cleared).
+	waitingCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionWaiting)
+	if waitingCond == nil || waitingCond.Status != metav1.ConditionFalse {
+		t.Errorf("expected Waiting=False when ConductorReady=True (gate 0 cleared), got %v", waitingCond)
+	}
+
+	// Gate 1 (signature) must have fired.
+	sigCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackSignaturePending)
+	if sigCond == nil || sigCond.Status != metav1.ConditionTrue {
+		t.Errorf("expected PackSignaturePending=True when signature gate fires after gate 0 clears")
 	}
 }

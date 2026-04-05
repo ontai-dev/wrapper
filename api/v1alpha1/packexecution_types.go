@@ -40,6 +40,12 @@ const (
 	// ConditionTypeRBACProfileNotProvisioned indicates the RBACProfile for the
 	// target cluster has not reached provisioned=true. Requeue with backoff.
 	ConditionTypeRBACProfileNotProvisioned = "RBACProfileNotProvisioned"
+
+	// ConditionTypePackExecutionWaiting indicates the PackExecution is waiting for
+	// a cluster-level prerequisite before any pack-level gates are checked.
+	// Currently used for the ConductorReady gate (gate 0). wrapper-schema.md §4,
+	// platform-schema.md §12. Gap 27.
+	ConditionTypePackExecutionWaiting = "Waiting"
 )
 
 // Condition reason constants for PackExecution.
@@ -53,6 +59,9 @@ const (
 	ReasonJobFailed                = "JobFailed"
 	ReasonGatesClearing            = "GatesClearing"
 	ReasonOperationResultNotFound  = "OperationResultNotFound"
+	// ReasonAwaitingConductorReady is set on Waiting when the target cluster
+	// TalosCluster does not yet have ConductorReady=True. platform-schema.md §12.
+	ReasonAwaitingConductorReady   = "AwaitingConductorReady"
 )
 
 // ClusterPackRef identifies a specific ClusterPack by name and version.
