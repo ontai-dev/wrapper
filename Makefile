@@ -1,4 +1,4 @@
-.PHONY: build test lint lint-docs install-hooks generate generate-deepcopy generate-crd clean
+.PHONY: build test e2e lint lint-docs install-hooks generate generate-deepcopy generate-crd clean
 
 CONTROLLER_GEN ?= $(shell which controller-gen 2>/dev/null || echo $(HOME)/go/bin/controller-gen)
 
@@ -6,7 +6,13 @@ build:
 	go build ./...
 
 test:
-	go test ./...
+	go test ./test/unit/...
+
+e2e:
+	MGMT_KUBECONFIG=$(MGMT_KUBECONFIG) TENANT_KUBECONFIG=$(TENANT_KUBECONFIG) \
+	REGISTRY_ADDR=$(REGISTRY_ADDR) MGMT_CLUSTER_NAME=$(MGMT_CLUSTER_NAME) \
+	TENANT_CLUSTER_NAME=$(TENANT_CLUSTER_NAME) \
+	go test ./test/e2e/... -v -timeout 30m
 
 lint: lint-docs install-hooks
 	golangci-lint run ./...
