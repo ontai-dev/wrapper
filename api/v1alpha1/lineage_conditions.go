@@ -1,31 +1,29 @@
 package v1alpha1
 
-// Lineage condition type and reason constants shared across all Wrapper CRD
-// status condition sets. These values are defined by seam-core-schema.md §7
-// Declaration 5 and are reserved platform-wide. No Wrapper CRD may use the
-// ConditionTypeLineageSynced name for any purpose other than lineage sync tracking.
+// Lineage condition type and reason constants re-exported from
+// seam-core/pkg/conditions — the canonical source. seam-core-schema.md §7
+// Declaration 5. SC-INV-002 / Gap 31 WS2.
+//
+// Wrapper reconcilers reference these via the wrapperv1alpha1 package alias;
+// they continue to compile without modification. New code should prefer importing
+// github.com/ontai-dev/seam-core/pkg/conditions directly.
+
+import "github.com/ontai-dev/seam-core/pkg/conditions"
 
 const (
 	// ConditionTypeLineageSynced is the reserved condition type for lineage
 	// synchronization status on every root declaration CR.
 	//
-	// Lifecycle:
-	//  1. On first observation of a root declaration CR, the responsible reconciler
-	//     sets this condition to False with reason LineageControllerAbsent.
-	//     This is a one-time initialization — the reconciler never writes this
-	//     condition again.
-	//  2. When InfrastructureLineageController is deployed and processes the root
-	//     declaration, it takes ownership of this condition and sets it to True.
-	//  3. If InfrastructureLineageController is not deployed, this condition remains
-	//     False/LineageControllerAbsent indefinitely. This is the expected steady
-	//     state during the stub phase and is not an error condition.
+	// Lifecycle (seam-core-schema.md §7 Declaration 5):
+	//  1. On first observation the responsible reconciler sets this to False with
+	//     reason ReasonLineageControllerAbsent. One-time write.
+	//  2. InfrastructureLineageController takes ownership on deployment, sets True.
+	//  3. If InfrastructureLineageController is absent, remains False/LineageControllerAbsent.
 	//
-	// seam-core-schema.md §7 Declaration 5.
-	ConditionTypeLineageSynced = "LineageSynced"
+	// Canonical source: github.com/ontai-dev/seam-core/pkg/conditions.
+	ConditionTypeLineageSynced = conditions.ConditionTypeLineageSynced
 
-	// ReasonLineageControllerAbsent is set when a reconciler initializes the
-	// LineageSynced condition to False. It indicates that InfrastructureLineageController
-	// has not yet been deployed and has not processed this root declaration.
-	// seam-core-schema.md §7 Declaration 5.
-	ReasonLineageControllerAbsent = "LineageControllerAbsent"
+	// ReasonLineageControllerAbsent is set when the reconciler initialises
+	// LineageSynced to False. Canonical source: pkg/conditions.
+	ReasonLineageControllerAbsent = conditions.ReasonLineageControllerAbsent
 )
