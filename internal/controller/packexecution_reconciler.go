@@ -55,7 +55,8 @@ const (
 	wrapperRunnerServiceAccount = "wrapper-runner"
 
 	// wrapperRunnerNamespace is the namespace where the runner ServiceAccount lives.
-	wrapperRunnerNamespace = "infra-system"
+	// Conductor execute-mode Jobs submitted by Wrapper run in ont-system.
+	wrapperRunnerNamespace = "ont-system"
 
 	// conductorImageEnvVar is the env var the operator reads for the conductor image.
 	// Defaults to the local dev registry if not set.
