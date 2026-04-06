@@ -36,8 +36,15 @@ func main() {
 		enableLeaderElection bool
 	)
 
-	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
-		"The address the metrics endpoint binds to.")
+	// METRICS_ADDR overrides the metrics bind address. Defaults to :8080.
+	// ServiceMonitor CRDs for Prometheus Operator scrape configuration are
+	// deferred to a post-e2e observability session.
+	metricsDefault := ":8080"
+	if v := os.Getenv("METRICS_ADDR"); v != "" {
+		metricsDefault = v
+	}
+	flag.StringVar(&metricsAddr, "metrics-bind-address", metricsDefault,
+		"The address the metrics endpoint binds to. Overridden by METRICS_ADDR env var.")
 	flag.StringVar(&healthProbeAddr, "health-probe-bind-address", ":8081",
 		"The address the health and readiness probes bind to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", true,
