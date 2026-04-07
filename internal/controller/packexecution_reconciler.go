@@ -417,6 +417,35 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			r.Recorder.Event(pe, corev1.EventTypeNormal, "Succeeded", "pack-deploy Job completed successfully.")
 			logger.Info("PackExecution succeeded",
 				"name", pe.Name, "jobName", jobName, "resultCM", resultCMName)
+
+			// Step I.b — Create PackInstance to record the delivered pack state.
+			// One PackInstance per (ClusterPack, TargetCluster) pair. Idempotent:
+			// AlreadyExists is silently ignored for restart safety.
+			// wrapper-schema.md §3 PackInstance. wrapper-design.md §2.
+			piName := pe.Spec.ClusterPackRef.Name + "-" + pe.Spec.TargetClusterRef
+			pi := &infrav1alpha1.PackInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      piName,
+					Namespace: pe.Namespace,
+					OwnerReferences: []metav1.OwnerReference{{
+						APIVersion:         infrav1alpha1.GroupVersion.String(),
+						Kind:               "PackExecution",
+						Name:               pe.Name,
+						UID:                pe.UID,
+						Controller:         boolPtr(true),
+						BlockOwnerDeletion: boolPtr(true),
+					}},
+				},
+				Spec: infrav1alpha1.PackInstanceSpec{
+					ClusterPackRef:   pe.Spec.ClusterPackRef.Name,
+					TargetClusterRef: pe.Spec.TargetClusterRef,
+				},
+			}
+			if err := r.Client.Create(ctx, pi); err != nil && !apierrors.IsAlreadyExists(err) {
+				return ctrl.Result{}, fmt.Errorf("failed to create PackInstance %s: %w", piName, err)
+			}
+			logger.Info("PackInstance created or already exists",
+				"name", piName, "namespace", pe.Namespace)
 			return ctrl.Result{}, nil
 		}
 
