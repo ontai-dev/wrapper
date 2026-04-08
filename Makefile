@@ -1,6 +1,9 @@
-.PHONY: build test e2e lint lint-docs install-hooks generate generate-deepcopy generate-crd clean
+.PHONY: build test e2e lint lint-docs lint-images install-hooks generate generate-deepcopy generate-crd clean docker-build docker-push
 
-CONTROLLER_GEN ?= $(shell which controller-gen 2>/dev/null || echo $(HOME)/go/bin/controller-gen)
+CONTROLLER_GEN   ?= $(shell which controller-gen 2>/dev/null || echo $(HOME)/go/bin/controller-gen)
+IMAGE_REGISTRY   ?= 10.20.0.1:5000/ontai-dev
+IMAGE_NAME       := ont-infra
+TAG              ?= dev
 
 build:
 	go build ./...
@@ -14,7 +17,7 @@ e2e:
 	TENANT_CLUSTER_NAME=$(TENANT_CLUSTER_NAME) \
 	go test ./test/e2e/... -v -timeout 30m
 
-lint: lint-docs install-hooks
+lint: lint-docs lint-images install-hooks
 	golangci-lint run ./...
 
 lint-docs:
@@ -49,3 +52,26 @@ generate-crd:
 
 clean:
 	rm -rf bin/
+
+# docker-build builds the Wrapper operator image (distroless, linux/amd64).
+docker-build:
+	docker build \
+		--platform linux/amd64 \
+		-f Dockerfile \
+		-t $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(TAG) \
+		.
+
+# docker-push pushes the already-built Wrapper image to the registry.
+docker-push:
+	docker push $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(TAG)
+
+# lint-images verifies the Wrapper image exists in the local OCI registry.
+lint-images:
+	@echo ">>> lint-images: checking $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(TAG) in registry"
+	@status=$$(curl -fsS -o /dev/null -w "%{http_code}" \
+		"http://10.20.0.1:5000/v2/ontai-dev/$(IMAGE_NAME)/manifests/$(TAG)" 2>/dev/null); \
+	if [ "$$status" != "200" ]; then \
+		echo "FAIL: $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(TAG) not found in registry (HTTP $$status)"; \
+		exit 1; \
+	fi
+	@echo "PASS: $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(TAG) present in registry"
