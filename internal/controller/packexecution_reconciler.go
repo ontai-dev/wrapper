@@ -32,8 +32,8 @@ const (
 	// invariant violation. wrapper-design.md §4.
 	kueueQueueLabel = "kueue.x-k8s.io/queue-name"
 
-	// packDeployQueue is the Kueue LocalQueue name in infra-system that admits
-	// pack-deploy Jobs. This queue is provisioned by Guardian from QueueProfile.
+	// packDeployQueue is the Kueue LocalQueue name that admits pack-deploy Jobs.
+	// The queue lives in the same namespace as the PackExecution (seam-tenant-{cluster}).
 	packDeployQueue = "pack-deploy-queue"
 
 	// operationResultCMPrefix is used to build the ConfigMap name for OperationResult.
@@ -420,15 +420,48 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			logger.Info("PackExecution succeeded",
 				"name", pe.Name, "jobName", jobName, "resultCM", resultCMName)
 
-			// Step I.b — Create PackInstance to record the delivered pack state.
-			// One PackInstance per (ClusterPack, TargetCluster) pair. Idempotent:
-			// AlreadyExists is silently ignored for restart safety.
-			// wrapper-schema.md §3 PackInstance. wrapper-design.md §2.
+			// Fix 3 — Attach Job OwnerReference to OperationResult ConfigMap so it
+			// is garbage-collected when the Job TTL expires. Idempotent: skips if the
+			// reference is already present. Non-fatal if patching fails.
+			jobOwnerRef := metav1.OwnerReference{
+				APIVersion:         "batch/v1",
+				Kind:               "Job",
+				Name:               existingJob.Name,
+				UID:                existingJob.UID,
+				Controller:         boolPtr(false),
+				BlockOwnerDeletion: boolPtr(true),
+			}
+			alreadyOwned := false
+			for _, ref := range resultCM.OwnerReferences {
+				if ref.UID == existingJob.UID {
+					alreadyOwned = true
+					break
+				}
+			}
+			if !alreadyOwned {
+				cmPatch := client.MergeFrom(resultCM.DeepCopy())
+				resultCM.OwnerReferences = append(resultCM.OwnerReferences, jobOwnerRef)
+				if patchErr := r.Client.Patch(ctx, resultCM, cmPatch); patchErr != nil {
+					logger.Error(patchErr, "failed to patch OperationResult ConfigMap with Job owner reference",
+						"cmName", resultCMName)
+				}
+			}
+
+			// Step I.b — Create PackInstance in seam-tenant-{clusterRef} to record the
+			// delivered pack state. Namespace is explicit per wrapper-schema.md §9.
+			// Labels infra.ontai.dev/pack and platform.ontai.dev/cluster enable
+			// conductor and tooling to filter PackInstances by pack or cluster.
+			// One PackInstance per (ClusterPack, TargetCluster). Idempotent.
 			piName := pe.Spec.ClusterPackRef.Name + "-" + pe.Spec.TargetClusterRef
+			piNamespace := "seam-tenant-" + pe.Spec.TargetClusterRef
 			pi := &infrav1alpha1.PackInstance{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      piName,
-					Namespace: pe.Namespace,
+					Namespace: piNamespace,
+					Labels: map[string]string{
+						"infra.ontai.dev/pack":        pe.Spec.ClusterPackRef.Name,
+						"platform.ontai.dev/cluster":  pe.Spec.TargetClusterRef,
+					},
 					OwnerReferences: []metav1.OwnerReference{{
 						APIVersion:         infrav1alpha1.GroupVersion.String(),
 						Kind:               "PackExecution",
@@ -447,7 +480,7 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				return ctrl.Result{}, fmt.Errorf("failed to create PackInstance %s: %w", piName, err)
 			}
 			logger.Info("PackInstance created or already exists",
-				"name", piName, "namespace", pe.Namespace)
+				"name", piName, "namespace", piNamespace)
 			return ctrl.Result{}, nil
 		}
 
@@ -697,6 +730,7 @@ func (r *PackExecutionReconciler) buildPackDeployJob(
 						{
 							Name:  "conductor",
 							Image: conductorImage,
+					ImagePullPolicy: corev1.PullAlways,
 							Env: []corev1.EnvVar{
 								{Name: "CAPABILITY", Value: packDeployCapability},
 								{Name: "CLUSTER_REF", Value: pe.Spec.TargetClusterRef},

@@ -151,10 +151,10 @@ func TestOwnershipChain_TalosClusterExists(t *testing.T) {
 			updated.Status.OperationResultRef, "pack-deploy-result-"+peName)
 	}
 
-	// Assertion 3: PackInstance created with ownerRef to PackExecution.
+	// Assertion 3: PackInstance created in seam-tenant-{clusterRef} (explicit per schema).
 	piName := cpName + "-" + clusterRef // "my-pack-cluster-a"
 	pi := &infrav1alpha1.PackInstance{}
-	if err := fakeClient.Get(ctx, types.NamespacedName{Name: piName, Namespace: "infra-system"}, pi); err != nil {
+	if err := fakeClient.Get(ctx, types.NamespacedName{Name: piName, Namespace: "seam-tenant-" + clusterRef}, pi); err != nil {
 		t.Fatalf("PackInstance %q not created after Job success: %v", piName, err)
 	}
 	if len(pi.OwnerReferences) != 1 {

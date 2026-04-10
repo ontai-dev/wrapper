@@ -374,10 +374,10 @@ func TestJobSucceeded_PackExecutionSucceeded(t *testing.T) {
 		t.Errorf("OperationResultRef=%q, want %q", updated.Status.OperationResultRef, expectedRef)
 	}
 
-	// PackInstance created with name {cpName}-{clusterRef}.
+	// PackInstance created in seam-tenant-{clusterRef} (explicit per wrapper-schema.md §9).
 	piName := cpName + "-" + clusterRef
 	pi := &infrav1alpha1.PackInstance{}
-	if err := fakeClient.Get(ctx, types.NamespacedName{Name: piName, Namespace: "infra-system"}, pi); err != nil {
+	if err := fakeClient.Get(ctx, types.NamespacedName{Name: piName, Namespace: "seam-tenant-" + clusterRef}, pi); err != nil {
 		t.Fatalf("PackInstance %q not created after Job success: %v", piName, err)
 	}
 	if pi.Spec.ClusterPackRef != cpName {
