@@ -6,15 +6,17 @@
 
 FROM golang:1.25 AS builder
 WORKDIR /build
-COPY . .
+COPY wrapper/ .
+COPY conductor/ ../conductor/
+COPY seam-core/ ../seam-core/
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -trimpath \
     -ldflags="-s -w" \
-    -o /bin/ont-infra \
-    ./cmd/ont-infra
+    -o /bin/wrapper \
+    ./cmd/wrapper
 
 FROM gcr.io/distroless/base:nonroot
-COPY --from=builder /bin/ont-infra /usr/local/bin/ont-infra
+COPY --from=builder /bin/wrapper /usr/local/bin/wrapper
 
 USER 65532:65532
-ENTRYPOINT ["/usr/local/bin/ont-infra"]
+ENTRYPOINT ["/usr/local/bin/wrapper"]

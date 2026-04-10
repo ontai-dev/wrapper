@@ -1,4 +1,4 @@
-// Binary ont-infra is the controller-runtime manager entry point for the
+// Binary wrapper is the controller-runtime manager entry point for the
 // wrapper operator.
 //
 // It registers ClusterPackReconciler, PackExecutionReconciler, and

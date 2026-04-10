@@ -47,7 +47,7 @@ func newPackInstance(name, namespace, packRef, clusterRef string) *infrav1alpha1
 func newPackReceipt(name, namespace string, signatureVerified bool, driftStatus string) *unstructured.Unstructured {
 	r := &unstructured.Unstructured{}
 	r.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "infra.ontai.dev",
+		Group:   "runner.ontai.dev",
 		Version: "v1alpha1",
 		Kind:    "PackReceipt",
 	})

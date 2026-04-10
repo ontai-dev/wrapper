@@ -334,7 +334,7 @@ func (r *PackInstanceReconciler) findSucceededPackExecution(
 func (r *PackInstanceReconciler) getPackReceipt(ctx context.Context, name, namespace string) (*unstructured.Unstructured, error) {
 	receipt := &unstructured.Unstructured{}
 	receipt.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "infra.ontai.dev",
+		Group:   "runner.ontai.dev",
 		Version: "v1alpha1",
 		Kind:    "PackReceipt",
 	})
