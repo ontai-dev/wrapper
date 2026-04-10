@@ -55,6 +55,7 @@ type PackInstanceReconciler struct {
 // +kubebuilder:rbac:groups=infra.ontai.dev,resources=packinstances,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=infra.ontai.dev,resources=packinstances/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=infra.ontai.dev,resources=packinstances/finalizers,verbs=update
+// +kubebuilder:rbac:groups=infra.ontai.dev,resources=packexecutions,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 func (r *PackInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -96,7 +97,41 @@ func (r *PackInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		)
 	}
 
-	// Step E — Read PackReceipt from the management cluster namespace.
+	// Step E — Check if a PackExecution for this pack+cluster has Succeeded=True.
+	// DSNSReconciler in seam-core emits the pack DNS TXT record only when
+	// PackInstance has Ready=True. We set Ready=True here as soon as the
+	// pack-deploy Job completes successfully, without waiting for the conductor
+	// agent to write a PackReceipt on the target cluster.
+	succeededPE, err := r.findSucceededPackExecution(ctx, pi.Namespace, pi.Spec.ClusterPackRef, pi.Spec.TargetClusterRef)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to find succeeded PackExecution: %w", err)
+	}
+	if succeededPE != nil {
+		infrav1alpha1.SetCondition(
+			&pi.Status.Conditions,
+			infrav1alpha1.ConditionTypePackInstanceReady,
+			metav1.ConditionTrue,
+			infrav1alpha1.ReasonPackDelivered,
+			fmt.Sprintf("Pack %s v%s successfully delivered to %s.",
+				succeededPE.Spec.ClusterPackRef.Name,
+				succeededPE.Spec.ClusterPackRef.Version,
+				pi.Spec.TargetClusterRef),
+			pi.Generation,
+		)
+		return ctrl.Result{RequeueAfter: driftCheckInterval}, nil
+	}
+	// No succeeded PackExecution — pack not yet delivered. Fall through to
+	// PackReceipt-based drift detection which handles the post-receipt lifecycle.
+	infrav1alpha1.SetCondition(
+		&pi.Status.Conditions,
+		infrav1alpha1.ConditionTypePackInstanceReady,
+		metav1.ConditionFalse,
+		infrav1alpha1.ReasonAwaitingDelivery,
+		"No succeeded PackExecution found for this pack and cluster.",
+		pi.Generation,
+	)
+
+	// Step F — Read PackReceipt from the management cluster namespace.
 	// PackReceipt is mirrored into the tenant namespace by the conductor agent.
 	// PackReceipt name convention: {clusterPackRef}-{targetClusterRef}
 	receiptName := pi.Spec.ClusterPackRef + "-" + pi.Spec.TargetClusterRef
@@ -264,6 +299,34 @@ func (r *PackInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	return ctrl.Result{RequeueAfter: driftCheckInterval}, nil
+}
+
+// findSucceededPackExecution lists PackExecutions in namespace and returns the first
+// one whose spec.clusterPackRef.name matches clusterPackRef and whose
+// spec.targetClusterRef matches targetClusterRef and that has Succeeded=True.
+// Returns nil if no matching succeeded PackExecution exists.
+func (r *PackInstanceReconciler) findSucceededPackExecution(
+	ctx context.Context,
+	namespace, clusterPackRef, targetClusterRef string,
+) (*infrav1alpha1.PackExecution, error) {
+	list := &infrav1alpha1.PackExecutionList{}
+	if err := r.Client.List(ctx, list, client.InNamespace(namespace)); err != nil {
+		return nil, fmt.Errorf("list PackExecutions: %w", err)
+	}
+	for i := range list.Items {
+		pe := &list.Items[i]
+		if pe.Spec.ClusterPackRef.Name != clusterPackRef {
+			continue
+		}
+		if pe.Spec.TargetClusterRef != targetClusterRef {
+			continue
+		}
+		succeededCond := infrav1alpha1.FindCondition(pe.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionSucceeded)
+		if succeededCond != nil && succeededCond.Status == metav1.ConditionTrue {
+			return pe, nil
+		}
+	}
+	return nil, nil
 }
 
 // getPackReceipt reads a PackReceipt resource via unstructured from the management

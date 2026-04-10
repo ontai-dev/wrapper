@@ -268,6 +268,116 @@ func TestPackInstanceReconciler_DependencyBlock(t *testing.T) {
 	}
 }
 
+// newSucceededPackExecution builds a PackExecution with Succeeded=True for use in tests.
+func newSucceededPackExecution(name, namespace, packName, packVersion, clusterRef string) *infrav1alpha1.PackExecution {
+	pe := &infrav1alpha1.PackExecution{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: infrav1alpha1.PackExecutionSpec{
+			ClusterPackRef: infrav1alpha1.ClusterPackRef{
+				Name:    packName,
+				Version: packVersion,
+			},
+			TargetClusterRef:    clusterRef,
+			AdmissionProfileRef: "rbac-profile",
+		},
+		Status: infrav1alpha1.PackExecutionStatus{
+			Conditions: []metav1.Condition{
+				{
+					Type:               infrav1alpha1.ConditionTypePackExecutionSucceeded,
+					Status:             metav1.ConditionTrue,
+					Reason:             infrav1alpha1.ReasonJobSucceeded,
+					LastTransitionTime: metav1.Now(),
+				},
+			},
+		},
+	}
+	return pe
+}
+
+// TestPackInstanceReconciler_ReadyWhenPackExecutionSucceeded verifies that when a
+// PackExecution for the matching pack+cluster has Succeeded=True, the PackInstance
+// is set to Ready=True with reason PackDelivered — even when no PackReceipt exists.
+// This is the trigger for DSNSReconciler in seam-core to emit the pack DNS TXT record.
+func TestPackInstanceReconciler_ReadyWhenPackExecutionSucceeded(t *testing.T) {
+	s := newPackInstanceScheme(t)
+	pi := newPackInstance("pi-pe-ready", "infra-system", "my-pack", "cluster-a")
+	pe := newSucceededPackExecution("pe-1", "infra-system", "my-pack", "1.2.3", "cluster-a")
+
+	fakeClient := fake.NewClientBuilder().WithScheme(s).
+		WithObjects(pi).
+		WithStatusSubresource(&infrav1alpha1.PackInstance{}, &infrav1alpha1.PackExecution{}).
+		Build()
+	// Create the PE with status via status subresource.
+	if err := fakeClient.Create(context.Background(), pe); err != nil {
+		t.Fatalf("create PackExecution: %v", err)
+	}
+	if err := fakeClient.Status().Update(context.Background(), pe); err != nil {
+		t.Fatalf("update PackExecution status: %v", err)
+	}
+
+	r := &controller.PackInstanceReconciler{
+		Client:   fakeClient,
+		Scheme:   s,
+		Recorder: record.NewFakeRecorder(10),
+	}
+
+	result := reconcilePI(t, r, pi)
+	if result.RequeueAfter != 60*1e9 {
+		t.Errorf("expected RequeueAfter=60s, got %v", result.RequeueAfter)
+	}
+
+	updated := &infrav1alpha1.PackInstance{}
+	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pi), updated); err != nil {
+		t.Fatalf("get updated PackInstance: %v", err)
+	}
+	readyCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackInstanceReady)
+	if readyCond == nil {
+		t.Fatal("expected Ready condition on PackInstance")
+	}
+	if readyCond.Status != metav1.ConditionTrue {
+		t.Errorf("expected Ready=True when PackExecution Succeeded=True, got %v", readyCond.Status)
+	}
+	if readyCond.Reason != infrav1alpha1.ReasonPackDelivered {
+		t.Errorf("expected reason PackDelivered, got %q", readyCond.Reason)
+	}
+	wantMsg := "Pack my-pack v1.2.3 successfully delivered to cluster-a."
+	if readyCond.Message != wantMsg {
+		t.Errorf("Ready message mismatch\ngot:  %q\nwant: %q", readyCond.Message, wantMsg)
+	}
+}
+
+// TestPackInstanceReconciler_AwaitingDeliveryWhenNoPackExecution verifies that when
+// no PackExecution exists for the pack+cluster, Ready=False with AwaitingDelivery is set.
+func TestPackInstanceReconciler_AwaitingDeliveryWhenNoPackExecution(t *testing.T) {
+	s := newPackInstanceScheme(t)
+	// No PackExecution and no PackReceipt — pack not yet deployed.
+	pi := newPackInstance("pi-awaiting", "infra-system", "my-pack", "cluster-a")
+	fakeClient := fake.NewClientBuilder().WithScheme(s).
+		WithObjects(pi).
+		WithStatusSubresource(&infrav1alpha1.PackInstance{}).
+		Build()
+
+	r := &controller.PackInstanceReconciler{
+		Client:   fakeClient,
+		Scheme:   s,
+		Recorder: record.NewFakeRecorder(10),
+	}
+
+	reconcilePI(t, r, pi)
+
+	updated := &infrav1alpha1.PackInstance{}
+	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pi), updated); err != nil {
+		t.Fatalf("get updated PackInstance: %v", err)
+	}
+	readyCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackInstanceReady)
+	if readyCond != nil && readyCond.Status == metav1.ConditionTrue {
+		t.Error("expected Ready != True when no PackExecution exists")
+	}
+}
+
 // TestPackInstanceReconciler_LineageSyncedInitialized verifies LineageSynced is
 // set on first observation.
 func TestPackInstanceReconciler_LineageSyncedInitialized(t *testing.T) {

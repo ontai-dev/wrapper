@@ -51,14 +51,18 @@ const (
 
 // Condition reason constants for PackInstance.
 const (
-	ReasonPackDelivered          = "PackDelivered"
-	ReasonDriftDetected          = "DriftDetected"
-	ReasonNoDrift                = "NoDrift"
-	ReasonDependencyDrifted      = "DependencyDrifted"
-	ReasonSignatureVerifyFailed  = "SignatureVerifyFailed"
-	ReasonPackReceiptNotFound    = "PackReceiptNotFound"
-	ReasonPackReceiptReady       = "PackReceiptReady"
+	ReasonPackDelivered            = "PackDelivered"
+	ReasonDriftDetected            = "DriftDetected"
+	ReasonNoDrift                  = "NoDrift"
+	ReasonDependencyDrifted        = "DependencyDrifted"
+	ReasonSignatureVerifyFailed    = "SignatureVerifyFailed"
+	ReasonPackReceiptNotFound      = "PackReceiptNotFound"
+	ReasonPackReceiptReady         = "PackReceiptReady"
 	ReasonSecurityViolationCleared = "SecurityViolationCleared"
+	// ReasonAwaitingDelivery is set on Ready=False when no succeeded PackExecution
+	// exists for the pack+cluster pair. DSNSReconciler in seam-core waits for
+	// Ready=True before emitting the pack DNS TXT record.
+	ReasonAwaitingDelivery = "AwaitingDelivery"
 )
 
 // DependencyPolicy defines behavior when a dependency PackInstance reports drift.
