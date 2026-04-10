@@ -9,7 +9,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -184,6 +186,75 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		logger.Info("ClusterPack awaiting conductor signature — requeueing",
 			"name", cp.Name, "namespace", cp.Namespace)
 		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
+	}
+
+	// Step I — RunnerConfig provisioning: create one RunnerConfig per targetCluster
+	// in seam-tenant-{clusterName} with a pack-deploy step. Idempotent: skips if
+	// PackInstance or RunnerConfig already exists for this (pack, cluster) pair.
+	// Conductor agent watches RunnerConfigs labeled infra.ontai.dev/pack and creates
+	// PackExecution from them (WS3). wrapper-schema.md §9 delivery chain.
+	for _, clusterName := range cp.Spec.TargetClusters {
+		tenantNS := "seam-tenant-" + clusterName
+		rcName := cp.Name + "-" + clusterName
+
+		// Skip if PackInstance already exists — pack already delivered to this cluster.
+		existingPI := &infrav1alpha1.PackInstance{}
+		piName := cp.Name + "-" + clusterName
+		if err := r.Client.Get(ctx, client.ObjectKey{Name: piName, Namespace: tenantNS}, existingPI); err == nil {
+			logger.Info("PackInstance exists — skipping RunnerConfig creation",
+				"pack", cp.Name, "cluster", clusterName)
+			continue
+		} else if !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, fmt.Errorf("get PackInstance %s/%s: %w", tenantNS, piName, err)
+		}
+
+		// Skip if RunnerConfig already exists — Conductor has it in flight.
+		existingRC := &unstructured.Unstructured{}
+		existingRC.SetGroupVersionKind(schema.GroupVersionKind{
+			Group: "runner.ontai.dev", Version: "v1alpha1", Kind: "RunnerConfig",
+		})
+		if err := r.Client.Get(ctx, client.ObjectKey{Name: rcName, Namespace: tenantNS}, existingRC); err == nil {
+			logger.Info("RunnerConfig exists — skipping creation",
+				"pack", cp.Name, "cluster", clusterName)
+			continue
+		} else if !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, fmt.Errorf("get RunnerConfig %s/%s: %w", tenantNS, rcName, err)
+		}
+
+		// Create RunnerConfig with pack-deploy step in seam-tenant-{clusterName}.
+		// Labels platform.ontai.dev/cluster and infra.ontai.dev/pack enable
+		// Conductor agent to find and act on this RunnerConfig. WS3.
+		newRC := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "runner.ontai.dev/v1alpha1",
+			"kind":       "RunnerConfig",
+			"metadata": map[string]interface{}{
+				"name":      rcName,
+				"namespace": tenantNS,
+				"labels": map[string]interface{}{
+					"platform.ontai.dev/cluster":  clusterName,
+					"infra.ontai.dev/pack":         cp.Name,
+					"infra.ontai.dev/pack-version": cp.Spec.Version,
+				},
+			},
+			"spec": map[string]interface{}{
+				"clusterRef":  clusterName,
+				"runnerImage": conductorImageDefault,
+				"steps": []interface{}{
+					map[string]interface{}{
+						"name":          "pack-deploy",
+						"capability":    "pack-deploy",
+						"haltOnFailure": true,
+					},
+				},
+			},
+		}}
+		if err := r.Client.Create(ctx, newRC); err != nil && !apierrors.IsAlreadyExists(err) {
+			return ctrl.Result{}, fmt.Errorf("create RunnerConfig %s/%s: %w", tenantNS, rcName, err)
+		}
+		logger.Info("RunnerConfig created for pack delivery",
+			"pack", cp.Name, "version", cp.Spec.Version, "cluster", clusterName, "runnerConfig", rcName)
+		r.Recorder.Event(cp, corev1.EventTypeNormal, "RunnerConfigCreated",
+			fmt.Sprintf("RunnerConfig %s created in %s for pack delivery to cluster %s.", rcName, tenantNS, clusterName))
 	}
 
 	return ctrl.Result{}, nil

@@ -118,6 +118,12 @@ type ClusterPackSpec struct {
 	// +optional
 	Provenance *PackProvenance `json:"provenance,omitempty"`
 
+	// TargetClusters is the list of cluster names to which this ClusterPack should
+	// be delivered. The ClusterPackReconciler creates one RunnerConfig per entry in
+	// seam-tenant-{clusterName} after signing completes. wrapper-schema.md §4.
+	// +optional
+	TargetClusters []string `json:"targetClusters,omitempty"`
+
 	// Lineage is the sealed causal chain record for this root declaration.
 	// Authored once at object creation time and immutable thereafter.
 	// The admission webhook rejects any update that modifies this field after creation.
