@@ -695,9 +695,8 @@ func (r *PackExecutionReconciler) buildPackDeployJob(
 					},
 					Containers: []corev1.Container{
 						{
-							Name:    "conductor",
-							Image:   conductorImage,
-							Command: []string{"execute"},
+							Name:  "conductor",
+							Image: conductorImage,
 							Env: []corev1.EnvVar{
 								{Name: "CAPABILITY", Value: packDeployCapability},
 								{Name: "CLUSTER_REF", Value: pe.Spec.TargetClusterRef},
