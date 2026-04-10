@@ -60,7 +60,7 @@ const (
 
 	// conductorImageEnvVar is the env var the operator reads for the conductor image.
 	// Defaults to the local dev registry if not set.
-	conductorImageDefault = "10.20.0.1:5000/ontai-dev/conductor:dev"
+	conductorImageDefault = "10.20.0.1:5000/ontai-dev/conductor-execute:dev"
 
 	// kubeconfigSecretName is the kubeconfig Secret in ont-system mounted by pack-deploy Jobs.
 	kubeconfigSecretName = "target-cluster-kubeconfig"
