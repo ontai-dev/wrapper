@@ -695,12 +695,14 @@ func (r *PackExecutionReconciler) buildPackDeployJob(
 					},
 					Containers: []corev1.Container{
 						{
-							Name:  "conductor",
-							Image: conductorImage,
+							Name:    "conductor",
+							Image:   conductorImage,
+							Command: []string{"execute"},
 							Env: []corev1.EnvVar{
 								{Name: "CAPABILITY", Value: packDeployCapability},
 								{Name: "CLUSTER_REF", Value: pe.Spec.TargetClusterRef},
 								{Name: "OPERATION_RESULT_CM", Value: resultCMName},
+								{Name: "POD_NAMESPACE", Value: pe.Namespace},
 								{Name: "PACK_REGISTRY_REF", Value: cp.Spec.RegistryRef.URL + "@" + cp.Spec.RegistryRef.Digest},
 								{Name: "PACK_CHECKSUM", Value: cp.Spec.Checksum},
 								{Name: "PACK_SIGNATURE", Value: cp.Status.PackSignature},
