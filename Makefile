@@ -2,7 +2,7 @@
 
 CONTROLLER_GEN   ?= $(shell which controller-gen 2>/dev/null || echo $(HOME)/go/bin/controller-gen)
 IMAGE_REGISTRY   ?= 10.20.0.1:5000/ontai-dev
-IMAGE_NAME       := ont-infra
+IMAGE_NAME       := wrapper
 TAG              ?= dev
 
 build:
@@ -59,7 +59,7 @@ docker-build:
 		--platform linux/amd64 \
 		-f Dockerfile \
 		-t $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(TAG) \
-		.
+		..
 
 # docker-push pushes the already-built Wrapper image to the registry.
 docker-push:
