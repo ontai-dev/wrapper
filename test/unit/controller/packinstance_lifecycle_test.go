@@ -57,6 +57,7 @@ func allGatesSetup(t *testing.T, peName, cpName, cpVersion, clusterRef, profileR
 	cp := newSignedCP(cpName, cpVersion, "infra-system")
 	pe := newPE(peName, cpName, cpVersion, cp.UID, clusterRef, profileRef, "infra-system")
 	tc := newTalosCluster(clusterRef, true)
+	rc := newRunnerConfig(clusterRef, 1) // gate 0: RunnerConfig with 1 capability
 	ps := newPermissionSnapshot(clusterRef, "infra-system", true)
 	rp := newRBACProfile(profileRef, "infra-system", true)
 
@@ -66,7 +67,7 @@ func allGatesSetup(t *testing.T, peName, cpName, cpVersion, clusterRef, profileR
 		Build()
 
 	ctx := context.Background()
-	for _, obj := range []client.Object{tc, ps, rp} {
+	for _, obj := range []client.Object{tc, rc, ps, rp} {
 		if err := fakeClient.Create(ctx, obj); err != nil {
 			t.Fatalf("allGatesSetup: create %T: %v", obj, err)
 		}
@@ -335,10 +336,11 @@ func TestDeletion_ClusterPackReconciler_NoJobsSubmitted(t *testing.T) {
 	}
 }
 
-// TestGate0_ConductorReadyFalse verifies that Gate 0 blocks Job submission and
-// surfaces Waiting=True with ReasonAwaitingConductorReady when the target
-// TalosCluster has ConductorReady=False. platform-schema.md §12, Gap 27.
-func TestGate0_ConductorReadyFalse(t *testing.T) {
+// TestGate0_RunnerConfigAbsent verifies that Gate 0 blocks Job submission and
+// surfaces Waiting=True with ReasonAwaitingConductorReady when the TalosCluster
+// exists but no RunnerConfig is present in ont-system. The RunnerConfig with
+// published capabilities is the correct conductor-ready signal. Gap 27.
+func TestGate0_RunnerConfigAbsent(t *testing.T) {
 	const (
 		peName     = "pe-gate0"
 		cpName     = "my-pack"
@@ -350,7 +352,7 @@ func TestGate0_ConductorReadyFalse(t *testing.T) {
 	s := buildTestScheme(t)
 	cp := newSignedCP(cpName, cpVersion, "infra-system")
 	pe := newPE(peName, cpName, cpVersion, cp.UID, clusterRef, profileRef, "infra-system")
-	tc := newTalosCluster(clusterRef, false) // ConductorReady=False
+	tc := newTalosCluster(clusterRef, true) // TalosCluster present; no RunnerConfig
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
@@ -411,13 +413,17 @@ func TestGate1_SignaturePending(t *testing.T) {
 	cp.Status.Signed = false // Override: not yet signed.
 	pe := newPE(peName, cpName, cpVersion, cp.UID, clusterRef, profileRef, "infra-system")
 	tc := newTalosCluster(clusterRef, true)
+	rc := newRunnerConfig(clusterRef, 1) // gate 0 must clear to reach gate 1
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
 		WithStatusSubresource(&infrav1alpha1.PackExecution{}).
 		Build()
-	if err := fakeClient.Create(context.Background(), tc); err != nil {
-		t.Fatalf("create TalosCluster: %v", err)
+	ctx := context.Background()
+	for _, obj := range []client.Object{tc, rc} {
+		if err := fakeClient.Create(ctx, obj); err != nil {
+			t.Fatalf("create %T: %v", obj, err)
+		}
 	}
 
 	r := &controller.PackExecutionReconciler{
@@ -432,7 +438,6 @@ func TestGate1_SignaturePending(t *testing.T) {
 		t.Errorf("expected RequeueAfter=15s for signature gate, got %v", result.RequeueAfter)
 	}
 
-	ctx := context.Background()
 	updated := &infrav1alpha1.PackExecution{}
 	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("get PackExecution: %v", err)
@@ -477,6 +482,7 @@ func TestGate2_PackRevoked(t *testing.T) {
 	}}
 	pe := newPE(peName, cpName, cpVersion, cp.UID, clusterRef, profileRef, "infra-system")
 	tc := newTalosCluster(clusterRef, true)
+	rc := newRunnerConfig(clusterRef, 1) // gate 0 must clear to reach gate 2
 	ps := newPermissionSnapshot(clusterRef, "infra-system", true)
 	rp := newRBACProfile(profileRef, "infra-system", true)
 
@@ -485,7 +491,7 @@ func TestGate2_PackRevoked(t *testing.T) {
 		WithStatusSubresource(&infrav1alpha1.PackExecution{}).
 		Build()
 	ctx := context.Background()
-	for _, obj := range []client.Object{tc, ps, rp} {
+	for _, obj := range []client.Object{tc, rc, ps, rp} {
 		if err := fakeClient.Create(ctx, obj); err != nil {
 			t.Fatalf("create %T: %v", obj, err)
 		}
@@ -537,6 +543,7 @@ func TestGate3_PermissionSnapshotOutOfSync(t *testing.T) {
 	cp := newSignedCP(cpName, cpVersion, "infra-system")
 	pe := newPE(peName, cpName, cpVersion, cp.UID, clusterRef, profileRef, "infra-system")
 	tc := newTalosCluster(clusterRef, true)
+	rc := newRunnerConfig(clusterRef, 1) // gate 0 must clear to reach gate 3
 	ps := newPermissionSnapshot(clusterRef, "infra-system", false) // current=false
 	rp := newRBACProfile(profileRef, "infra-system", true)
 
@@ -545,7 +552,7 @@ func TestGate3_PermissionSnapshotOutOfSync(t *testing.T) {
 		WithStatusSubresource(&infrav1alpha1.PackExecution{}).
 		Build()
 	ctx := context.Background()
-	for _, obj := range []client.Object{tc, ps, rp} {
+	for _, obj := range []client.Object{tc, rc, ps, rp} {
 		if err := fakeClient.Create(ctx, obj); err != nil {
 			t.Fatalf("create %T: %v", obj, err)
 		}
@@ -599,6 +606,7 @@ func TestGate4_RBACProfileNotProvisioned(t *testing.T) {
 	cp := newSignedCP(cpName, cpVersion, "infra-system")
 	pe := newPE(peName, cpName, cpVersion, cp.UID, clusterRef, profileRef, "infra-system")
 	tc := newTalosCluster(clusterRef, true)
+	rc := newRunnerConfig(clusterRef, 1) // gate 0 must clear to reach gate 4
 	ps := newPermissionSnapshot(clusterRef, "infra-system", true)
 	rp := newRBACProfile(profileRef, "infra-system", false) // provisioned=false
 
@@ -607,7 +615,7 @@ func TestGate4_RBACProfileNotProvisioned(t *testing.T) {
 		WithStatusSubresource(&infrav1alpha1.PackExecution{}).
 		Build()
 	ctx := context.Background()
-	for _, obj := range []client.Object{tc, ps, rp} {
+	for _, obj := range []client.Object{tc, rc, ps, rp} {
 		if err := fakeClient.Create(ctx, obj); err != nil {
 			t.Fatalf("create %T: %v", obj, err)
 		}
@@ -643,5 +651,219 @@ func TestGate4_RBACProfileNotProvisioned(t *testing.T) {
 	}
 	if len(jobList.Items) > 0 {
 		t.Errorf("no Job expected when Gate 4 blocked, got %d", len(jobList.Items))
+	}
+}
+
+// ── Gate 0 (ConductorReady) targeted tests ────────────────────────────────────
+
+// TestConductorReady_ManagementClusterFallback_SeamSystem verifies that
+// isConductorReadyForCluster finds the TalosCluster in seam-system when it is
+// not present in seam-tenant-{clusterRef}. This covers the management cluster
+// case where TalosCluster lives outside any tenant namespace. Fix 1. Gap 27.
+func TestConductorReady_ManagementClusterFallback_SeamSystem(t *testing.T) {
+	const (
+		peName     = "pe-mgmt-fallback"
+		cpName     = "mgmt-pack"
+		cpVersion  = "v1.0.0"
+		clusterRef = "ccs-mgmt"
+		profileRef = "profile-mgmt"
+	)
+
+	s := buildTestScheme(t)
+	cp := newSignedCP(cpName, cpVersion, "infra-system")
+	pe := newPE(peName, cpName, cpVersion, cp.UID, clusterRef, profileRef, "infra-system")
+
+	// Management cluster TalosCluster lives in seam-system, not seam-tenant-*.
+	tc := newTalosCluster(clusterRef, true)
+	tc.SetNamespace("seam-system") // override the default seam-tenant-* namespace
+
+	rc := newRunnerConfig(clusterRef, 1)
+	ps := newPermissionSnapshot(clusterRef, "infra-system", true)
+	rp := newRBACProfile(profileRef, "infra-system", true)
+
+	fakeClient := fake.NewClientBuilder().WithScheme(s).
+		WithObjects(cp, pe).
+		WithStatusSubresource(&infrav1alpha1.PackExecution{}).
+		Build()
+	ctx := context.Background()
+	for _, obj := range []client.Object{tc, rc, ps, rp} {
+		if err := fakeClient.Create(ctx, obj); err != nil {
+			t.Fatalf("create %T: %v", obj, err)
+		}
+	}
+
+	// Add a running Job so reconcile advances past all gates.
+	job := newJob(packDeployJobName(peName), "infra-system", 0, 0)
+	if err := fakeClient.Create(ctx, job); err != nil {
+		t.Fatalf("create Job: %v", err)
+	}
+
+	r := &controller.PackExecutionReconciler{
+		Client:   fakeClient,
+		Scheme:   s,
+		Recorder: record.NewFakeRecorder(32),
+	}
+
+	reconcilePackExecution(t, r, peName, "infra-system")
+
+	updated := &infrav1alpha1.PackExecution{}
+	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(pe), updated); err != nil {
+		t.Fatalf("get PackExecution: %v", err)
+	}
+
+	// Gate 0 must have cleared: Waiting condition must NOT be set with AwaitingConductorReady.
+	waitCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionWaiting)
+	if waitCond != nil && waitCond.Status == metav1.ConditionTrue && waitCond.Reason == infrav1alpha1.ReasonAwaitingConductorReady {
+		t.Errorf("gate 0 blocked with seam-system fallback TalosCluster; expected gate 0 to clear: %+v", waitCond)
+	}
+}
+
+// TestConductorReady_RunnerConfigWithCapabilities_ReturnsTrue verifies that
+// gate 0 clears when the RunnerConfig for the cluster is present in ont-system
+// with at least one published capability. Fix 2. conductor-schema.md §5.
+func TestConductorReady_RunnerConfigWithCapabilities_ReturnsTrue(t *testing.T) {
+	const (
+		peName     = "pe-rc-ready"
+		cpName     = "rc-ready-pack"
+		cpVersion  = "v1.0.0"
+		clusterRef = "cluster-rc-ready"
+		profileRef = "profile-rc-ready"
+	)
+
+	fakeClient, pe := allGatesSetup(t, peName, cpName, cpVersion, clusterRef, profileRef)
+	ctx := context.Background()
+
+	// Add running Job so we can observe gate 0 cleared (reconcile reaches step H).
+	job := newJob(packDeployJobName(peName), "infra-system", 0, 0)
+	if err := fakeClient.Create(ctx, job); err != nil {
+		t.Fatalf("create Job: %v", err)
+	}
+
+	r := &controller.PackExecutionReconciler{
+		Client:   fakeClient,
+		Scheme:   buildTestScheme(t),
+		Recorder: record.NewFakeRecorder(32),
+	}
+
+	reconcilePackExecution(t, r, peName, "infra-system")
+
+	updated := &infrav1alpha1.PackExecution{}
+	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(pe), updated); err != nil {
+		t.Fatalf("get PackExecution: %v", err)
+	}
+
+	// Gate 0 cleared — Waiting condition must NOT have AwaitingConductorReady.
+	waitCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionWaiting)
+	if waitCond != nil && waitCond.Status == metav1.ConditionTrue && waitCond.Reason == infrav1alpha1.ReasonAwaitingConductorReady {
+		t.Errorf("gate 0 blocked unexpectedly with RunnerConfig present: %+v", waitCond)
+	}
+}
+
+// TestConductorReady_RunnerConfigAbsent_ReturnsFalse verifies that gate 0 blocks
+// Job submission when the TalosCluster is present but no RunnerConfig exists in
+// ont-system. An absent RunnerConfig means Conductor has not yet started or not
+// yet published its capability manifest. Fix 2. conductor-schema.md §5.
+func TestConductorReady_RunnerConfigAbsent_ReturnsFalse(t *testing.T) {
+	const (
+		peName     = "pe-no-rc"
+		cpName     = "my-pack"
+		cpVersion  = "v1.0.0"
+		clusterRef = "cluster-no-rc"
+		profileRef = "profile-no-rc"
+	)
+
+	s := buildTestScheme(t)
+	cp := newSignedCP(cpName, cpVersion, "infra-system")
+	pe := newPE(peName, cpName, cpVersion, cp.UID, clusterRef, profileRef, "infra-system")
+	tc := newTalosCluster(clusterRef, true) // TalosCluster present, RunnerConfig absent
+
+	fakeClient := fake.NewClientBuilder().WithScheme(s).
+		WithObjects(cp, pe).
+		WithStatusSubresource(&infrav1alpha1.PackExecution{}).
+		Build()
+	if err := fakeClient.Create(context.Background(), tc); err != nil {
+		t.Fatalf("create TalosCluster: %v", err)
+	}
+	// RunnerConfig deliberately NOT created.
+
+	r := &controller.PackExecutionReconciler{
+		Client:   fakeClient,
+		Scheme:   s,
+		Recorder: record.NewFakeRecorder(32),
+	}
+
+	result := reconcilePackExecution(t, r, peName, "infra-system")
+
+	if result.RequeueAfter == 0 {
+		t.Error("expected requeue when RunnerConfig absent (gate 0 not cleared)")
+	}
+
+	ctx := context.Background()
+	updated := &infrav1alpha1.PackExecution{}
+	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(pe), updated); err != nil {
+		t.Fatalf("get PackExecution: %v", err)
+	}
+	waitCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionWaiting)
+	if waitCond == nil || waitCond.Status != metav1.ConditionTrue {
+		t.Errorf("expected Waiting=True when RunnerConfig absent, got %+v", waitCond)
+	}
+	if waitCond.Reason != infrav1alpha1.ReasonAwaitingConductorReady {
+		t.Errorf("Waiting reason=%q, want %q", waitCond.Reason, infrav1alpha1.ReasonAwaitingConductorReady)
+	}
+}
+
+// TestConductorReady_RunnerConfigEmptyCapabilities_ReturnsFalse verifies that
+// gate 0 blocks when the RunnerConfig exists in ont-system but its
+// status.capabilities list is absent or empty. An empty capabilities list means
+// the Conductor agent has not yet completed startup and published its manifest.
+// Fix 2. conductor-schema.md §5, §10 step 3.
+func TestConductorReady_RunnerConfigEmptyCapabilities_ReturnsFalse(t *testing.T) {
+	const (
+		peName     = "pe-empty-caps"
+		cpName     = "my-pack"
+		cpVersion  = "v1.0.0"
+		clusterRef = "cluster-empty-caps"
+		profileRef = "profile-empty-caps"
+	)
+
+	s := buildTestScheme(t)
+	cp := newSignedCP(cpName, cpVersion, "infra-system")
+	pe := newPE(peName, cpName, cpVersion, cp.UID, clusterRef, profileRef, "infra-system")
+	tc := newTalosCluster(clusterRef, true)
+	rc := newRunnerConfig(clusterRef, 0) // capCount=0 → empty capabilities list
+
+	fakeClient := fake.NewClientBuilder().WithScheme(s).
+		WithObjects(cp, pe).
+		WithStatusSubresource(&infrav1alpha1.PackExecution{}).
+		Build()
+	ctx := context.Background()
+	for _, obj := range []client.Object{tc, rc} {
+		if err := fakeClient.Create(ctx, obj); err != nil {
+			t.Fatalf("create %T: %v", obj, err)
+		}
+	}
+
+	r := &controller.PackExecutionReconciler{
+		Client:   fakeClient,
+		Scheme:   s,
+		Recorder: record.NewFakeRecorder(32),
+	}
+
+	result := reconcilePackExecution(t, r, peName, "infra-system")
+
+	if result.RequeueAfter == 0 {
+		t.Error("expected requeue when RunnerConfig has empty capabilities (gate 0 not cleared)")
+	}
+
+	updated := &infrav1alpha1.PackExecution{}
+	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(pe), updated); err != nil {
+		t.Fatalf("get PackExecution: %v", err)
+	}
+	waitCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionWaiting)
+	if waitCond == nil || waitCond.Status != metav1.ConditionTrue {
+		t.Errorf("expected Waiting=True when RunnerConfig has empty capabilities, got %+v", waitCond)
+	}
+	if waitCond.Reason != infrav1alpha1.ReasonAwaitingConductorReady {
+		t.Errorf("Waiting reason=%q, want %q", waitCond.Reason, infrav1alpha1.ReasonAwaitingConductorReady)
 	}
 }

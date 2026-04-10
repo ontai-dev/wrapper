@@ -80,7 +80,7 @@ const (
 //  5. If Succeeded=True, stop (terminal state).
 //  6. If PackRevoked=True, stop (no requeue, human intervention required).
 //  7. Run 5-gate check in order:
-//     gate 0. ConductorReady gate — target cluster TalosCluster.ConductorReady=True
+//     gate 0. ConductorReady gate — RunnerConfig in ont-system has ≥1 capability
 //     gate 1. Signature gate — ClusterPack.status.Signed=true
 //     gate 2. Revocation gate — ClusterPack conditions Revoked != True
 //     gate 3. PermissionSnapshot gate — target cluster snapshot current
@@ -164,9 +164,10 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// Step G — 5-gate check. All gates must pass before Job submission.
 	// Gate 0: ConductorReady gate — cluster-level prerequisite checked first.
-	// Reads the TalosCluster for the target cluster from seam-tenant-{clusterRef}
-	// namespace and verifies that ConductorReady=True. If absent or False, the
-	// cluster's Conductor agent is not yet Available and pack delivery is unsafe.
+	// Verifies the TalosCluster is registered (seam-tenant-{clusterRef} or
+	// seam-system) and that the RunnerConfig for the cluster exists in ont-system
+	// with at least one published capability. The published capability list is the
+	// correct signal that the Conductor agent is live and ready to accept Jobs.
 	// platform-schema.md §12 Conductor Deployment Contract. Gap 27.
 	conductorReady, err := r.isConductorReadyForCluster(ctx, pe)
 	if err != nil {
@@ -179,8 +180,9 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			infrav1alpha1.ConditionTypePackExecutionWaiting,
 			metav1.ConditionTrue,
 			infrav1alpha1.ReasonAwaitingConductorReady,
-			fmt.Sprintf("Target cluster %q TalosCluster does not yet have ConductorReady=True. "+
-				"Waiting for the Conductor agent Deployment to become Available.",
+			fmt.Sprintf("Conductor agent for cluster %q is not yet ready: "+
+				"RunnerConfig in ont-system has no published capabilities. "+
+				"Waiting for the Conductor Deployment to start and declare its capability manifest.",
 				pe.Spec.TargetClusterRef),
 			pe.Generation,
 		)
@@ -570,49 +572,74 @@ func (r *PackExecutionReconciler) isRBACProfileProvisioned(ctx context.Context, 
 	return provisioned, nil
 }
 
-// isConductorReadyForCluster reads the TalosCluster CR for the target cluster via
-// unstructured (to avoid importing platform types) and checks whether the
-// ConductorReady condition has status=True. Returns (true, nil) when ConductorReady=True,
-// (false, nil) when the TalosCluster is not found, the condition is absent, or the
-// condition is False. Returns (false, err) only for unexpected API errors.
+// isConductorReadyForCluster determines whether the Conductor agent for the
+// target cluster is live and ready to accept Jobs. It performs two lookups:
 //
-// The TalosCluster for a target cluster lives in seam-tenant-{clusterRef} namespace.
+//  1. TalosCluster namespace (Fix 1): tries seam-tenant-{clusterRef} first; if
+//     not found, falls back to seam-system. The management cluster TalosCluster
+//     lives in seam-system, tenant cluster TalosCluster in seam-tenant-{name}.
+//     If the TalosCluster is absent in both namespaces, the cluster is not yet
+//     registered — return false.
+//
+//  2. RunnerConfig readiness (Fix 2): looks up the RunnerConfig named
+//     {targetClusterRef} in ont-system and checks status.capabilities. A
+//     non-empty capabilities list proves the Conductor agent has started, completed
+//     leader election, and published its capability manifest. The TalosCluster
+//     ConductorReady condition is NOT used — Platform never sets it.
+//     conductor-schema.md §5, §10 step 3.
+//
+// Returns (true, nil) when RunnerConfig exists with ≥1 capability.
+// Returns (false, nil) when TalosCluster is absent, RunnerConfig is absent, or
+// status.capabilities is empty. Returns (false, err) for unexpected API errors.
 // platform-schema.md §12, Gap 27.
 func (r *PackExecutionReconciler) isConductorReadyForCluster(ctx context.Context, pe *infrav1alpha1.PackExecution) (bool, error) {
-	tenantNS := "seam-tenant-" + pe.Spec.TargetClusterRef
-	tc := &unstructured.Unstructured{}
-	tc.SetGroupVersionKind(schema.GroupVersionKind{
+	clusterRef := pe.Spec.TargetClusterRef
+	tcGVK := schema.GroupVersionKind{
 		Group:   "platform.ontai.dev",
 		Version: "v1alpha1",
 		Kind:    "TalosCluster",
-	})
-	tcKey := types.NamespacedName{
-		Name:      pe.Spec.TargetClusterRef,
-		Namespace: tenantNS,
 	}
-	if err := r.Client.Get(ctx, tcKey, tc); err != nil {
+
+	// Fix 1: try seam-tenant-{clusterRef} then fall back to seam-system.
+	tcFound := false
+	for _, ns := range []string{"seam-tenant-" + clusterRef, "seam-system"} {
+		tc := &unstructured.Unstructured{}
+		tc.SetGroupVersionKind(tcGVK)
+		if err := r.Client.Get(ctx, types.NamespacedName{Name: clusterRef, Namespace: ns}, tc); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return false, err
+		}
+		tcFound = true
+		break
+	}
+	if !tcFound {
+		// TalosCluster absent in both namespaces — cluster not yet registered.
+		return false, nil
+	}
+
+	// Fix 2: check RunnerConfig in ont-system instead of TalosCluster ConductorReady
+	// condition. A RunnerConfig with at least one published capability is the
+	// correct signal that Conductor is live. conductor-schema.md §5, §10 step 3.
+	rc := &unstructured.Unstructured{}
+	rc.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "runner.ontai.dev",
+		Version: "v1alpha1",
+		Kind:    "RunnerConfig",
+	})
+	if err := r.Client.Get(ctx, types.NamespacedName{Name: clusterRef, Namespace: "ont-system"}, rc); err != nil {
 		if apierrors.IsNotFound(err) {
-			// TalosCluster not yet present — not an error, not ready.
 			return false, nil
 		}
 		return false, err
 	}
 
-	// Walk status.conditions looking for ConductorReady=True.
-	conditions, found, err := unstructured.NestedSlice(tc.Object, "status", "conditions")
-	if err != nil || !found {
+	caps, found, err := unstructured.NestedSlice(rc.Object, "status", "capabilities")
+	if err != nil || !found || len(caps) == 0 {
 		return false, nil
 	}
-	for _, raw := range conditions {
-		cond, ok := raw.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		if cond["type"] == "ConductorReady" && cond["status"] == "True" {
-			return true, nil
-		}
-	}
-	return false, nil
+	return true, nil
 }
 
 // buildPackDeployJob constructs the pack-deploy Job spec for Kueue admission.

@@ -110,6 +110,31 @@ func newRBACProfile(name, namespace string, provisioned bool) *unstructured.Unst
 	return rp
 }
 
+// newRunnerConfig creates a fake RunnerConfig unstructured object in ont-system
+// with capCount capability entries. capCount=0 leaves capabilities empty (gate 0
+// treats this as conductor not yet ready). Fix 2. conductor-schema.md §5.
+func newRunnerConfig(clusterName string, capCount int) *unstructured.Unstructured {
+	rc := &unstructured.Unstructured{}
+	rc.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "runner.ontai.dev",
+		Version: "v1alpha1",
+		Kind:    "RunnerConfig",
+	})
+	rc.SetName(clusterName)
+	rc.SetNamespace("ont-system")
+	if capCount > 0 {
+		caps := make([]interface{}, capCount)
+		for i := 0; i < capCount; i++ {
+			caps[i] = map[string]interface{}{
+				"name":    "pack-deploy",
+				"version": "v1.0.0",
+			}
+		}
+		_ = unstructured.SetNestedSlice(rc.Object, caps, "status", "capabilities")
+	}
+	return rc
+}
+
 // newTalosClusterWithConductorReady creates a fake TalosCluster unstructured object
 // in seam-tenant-{clusterName} with the given ConductorReady condition status.
 // Used to satisfy gate 0 in PackExecutionReconciler tests. Gap 27.
@@ -154,8 +179,9 @@ func TestPackExecutionReconciler_Gate1_SignaturePending(t *testing.T) {
 	s := newPackExecutionScheme(t)
 	cp := newClusterPack("my-pack", "infra-system", "v1.0.0")
 	pe := newPackExecution("exec-1", "infra-system", "my-pack", "v1.0.0", "cluster-a", "profile-a")
-	// ConductorReady=True satisfies gate 0 so gate 1 is the first to block.
+	// TalosCluster + RunnerConfig with capabilities satisfies gate 0; gate 1 is the first to block.
 	tc := newTalosClusterWithConductorReady("cluster-a", true)
+	rc := newRunnerConfig("cluster-a", 1)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
@@ -163,6 +189,9 @@ func TestPackExecutionReconciler_Gate1_SignaturePending(t *testing.T) {
 		Build()
 	if err := fakeClient.Create(context.Background(), tc); err != nil {
 		t.Fatalf("create TalosCluster: %v", err)
+	}
+	if err := fakeClient.Create(context.Background(), rc); err != nil {
+		t.Fatalf("create RunnerConfig: %v", err)
 	}
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
@@ -201,8 +230,9 @@ func TestPackExecutionReconciler_Gate2_PackRevoked(t *testing.T) {
 		},
 	}
 	pe := newPackExecution("exec-revoked", "infra-system", "my-pack", "v1.0.0", "cluster-a", "profile-a")
-	// ConductorReady=True satisfies gate 0 so gate 2 is the first to block.
+	// TalosCluster + RunnerConfig with capabilities satisfies gate 0; gate 2 is the first to block.
 	tc := newTalosClusterWithConductorReady("cluster-a", true)
+	rc := newRunnerConfig("cluster-a", 1)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
@@ -210,6 +240,9 @@ func TestPackExecutionReconciler_Gate2_PackRevoked(t *testing.T) {
 		Build()
 	if err := fakeClient.Create(context.Background(), tc); err != nil {
 		t.Fatalf("create TalosCluster: %v", err)
+	}
+	if err := fakeClient.Create(context.Background(), rc); err != nil {
+		t.Fatalf("create RunnerConfig: %v", err)
 	}
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
@@ -241,8 +274,9 @@ func TestPackExecutionReconciler_Gate3_SnapshotOutOfSync(t *testing.T) {
 	pe := newPackExecution("exec-snap", "infra-system", "my-pack", "v1.0.0", "cluster-a", "profile-a")
 	ps := newPermissionSnapshot("cluster-a", "infra-system", false)
 	profile := newRBACProfile("profile-a", "infra-system", true)
-	// ConductorReady=True satisfies gate 0 so gate 3 is the first to block.
+	// TalosCluster + RunnerConfig with capabilities satisfies gate 0; gate 3 is the first to block.
 	tc := newTalosClusterWithConductorReady("cluster-a", true)
+	rc := newRunnerConfig("cluster-a", 1)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe, profile).
@@ -254,6 +288,9 @@ func TestPackExecutionReconciler_Gate3_SnapshotOutOfSync(t *testing.T) {
 	}
 	if err := fakeClient.Create(context.Background(), tc); err != nil {
 		t.Fatalf("create TalosCluster: %v", err)
+	}
+	if err := fakeClient.Create(context.Background(), rc); err != nil {
+		t.Fatalf("create RunnerConfig: %v", err)
 	}
 
 	r := &controller.PackExecutionReconciler{
@@ -286,8 +323,9 @@ func TestPackExecutionReconciler_Gate4_RBACProfileNotProvisioned(t *testing.T) {
 	pe := newPackExecution("exec-rbac", "infra-system", "my-pack", "v1.0.0", "cluster-a", "profile-a")
 	ps := newPermissionSnapshot("cluster-a", "infra-system", true)
 	profile := newRBACProfile("profile-a", "infra-system", false)
-	// ConductorReady=True satisfies gate 0 so gate 4 is the first to block.
+	// TalosCluster + RunnerConfig with capabilities satisfies gate 0; gate 4 is the first to block.
 	tc := newTalosClusterWithConductorReady("cluster-a", true)
+	rc := newRunnerConfig("cluster-a", 1)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe, profile).
@@ -298,6 +336,9 @@ func TestPackExecutionReconciler_Gate4_RBACProfileNotProvisioned(t *testing.T) {
 	}
 	if err := fakeClient.Create(context.Background(), tc); err != nil {
 		t.Fatalf("create TalosCluster: %v", err)
+	}
+	if err := fakeClient.Create(context.Background(), rc); err != nil {
+		t.Fatalf("create RunnerConfig: %v", err)
 	}
 
 	r := &controller.PackExecutionReconciler{
@@ -331,8 +372,9 @@ func TestPackExecutionReconciler_AllGatesClear_JobSubmitted(t *testing.T) {
 	pe := newPackExecution("exec-submit", "infra-system", "my-pack", "v1.0.0", "cluster-a", "profile-a")
 	ps := newPermissionSnapshot("cluster-a", "infra-system", true)
 	profile := newRBACProfile("profile-a", "infra-system", true)
-	// TalosCluster with ConductorReady=True satisfies gate 0.
+	// TalosCluster + RunnerConfig with capabilities satisfies gate 0.
 	tc := newTalosClusterWithConductorReady("cluster-a", true)
+	rc := newRunnerConfig("cluster-a", 1)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe, profile).
@@ -343,6 +385,9 @@ func TestPackExecutionReconciler_AllGatesClear_JobSubmitted(t *testing.T) {
 	}
 	if err := fakeClient.Create(context.Background(), tc); err != nil {
 		t.Fatalf("create TalosCluster: %v", err)
+	}
+	if err := fakeClient.Create(context.Background(), rc); err != nil {
+		t.Fatalf("create RunnerConfig: %v", err)
 	}
 
 	r := &controller.PackExecutionReconciler{
@@ -515,8 +560,9 @@ func TestPackExecutionReconciler_Gate0_ConductorReadyTrue_ProceedsToSignatureGat
 	// Use an unsigned ClusterPack so gate 1 (signature) blocks after gate 0 passes.
 	cp := newClusterPack("my-pack", "infra-system", "v1.0.0")
 	pe := newPackExecution("exec-gate0-true", "infra-system", "my-pack", "v1.0.0", "cluster-c", "profile-c")
-	// TalosCluster with ConductorReady=True — gate 0 passes.
+	// TalosCluster + RunnerConfig with capabilities — gate 0 passes.
 	tc := newTalosClusterWithConductorReady("cluster-c", true)
+	rc := newRunnerConfig("cluster-c", 1)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
@@ -524,6 +570,9 @@ func TestPackExecutionReconciler_Gate0_ConductorReadyTrue_ProceedsToSignatureGat
 		Build()
 	if err := fakeClient.Create(context.Background(), tc); err != nil {
 		t.Fatalf("create TalosCluster: %v", err)
+	}
+	if err := fakeClient.Create(context.Background(), rc); err != nil {
+		t.Fatalf("create RunnerConfig: %v", err)
 	}
 
 	r := &controller.PackExecutionReconciler{

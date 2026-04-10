@@ -92,6 +92,32 @@ func newPE(name, cpName, cpVersion string, cpUID types.UID, clusterRef, profileR
 	}
 }
 
+// newRunnerConfig returns an unstructured RunnerConfig in ont-system with
+// capCount capability entries pre-populated in status.capabilities.
+// capCount=0 produces a RunnerConfig with an empty (absent) capabilities list,
+// which gate 0 treats as "conductor not yet ready". conductor-schema.md §5.
+func newRunnerConfig(clusterRef string, capCount int) *unstructured.Unstructured {
+	rc := &unstructured.Unstructured{}
+	rc.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "runner.ontai.dev",
+		Version: "v1alpha1",
+		Kind:    "RunnerConfig",
+	})
+	rc.SetName(clusterRef)
+	rc.SetNamespace("ont-system")
+	if capCount > 0 {
+		caps := make([]interface{}, capCount)
+		for i := 0; i < capCount; i++ {
+			caps[i] = map[string]interface{}{
+				"name":    "pack-deploy",
+				"version": "v1.0.0",
+			}
+		}
+		_ = unstructured.SetNestedSlice(rc.Object, caps, "status", "capabilities")
+	}
+	return rc
+}
+
 // newTalosCluster returns an unstructured TalosCluster in seam-tenant-{clusterRef}
 // with ConductorReady condition set per the conductorReady argument.
 // Reads via unstructured to avoid importing platform types (same pattern as reconciler).
