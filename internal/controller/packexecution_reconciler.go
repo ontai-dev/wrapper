@@ -510,8 +510,9 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 // isPermissionSnapshotCurrent reads the PermissionSnapshot for the target cluster
 // via unstructured to avoid importing guardian types. Returns true if the snapshot
-// has a Current=True condition. Returns false (not error) if the snapshot is not
-// found or not current.
+// has a Fresh=True condition. PermissionSnapshots live exclusively in seam-system
+// and are named "snapshot-{clusterRef}". guardian-schema.md §PS condition vocabulary.
+// Returns false (not error) if the snapshot is not found or not fresh.
 func (r *PackExecutionReconciler) isPermissionSnapshotCurrent(ctx context.Context, pe *infrav1alpha1.PackExecution) (bool, error) {
 	ps := &unstructured.Unstructured{}
 	ps.SetGroupVersionKind(schema.GroupVersionKind{
@@ -520,8 +521,8 @@ func (r *PackExecutionReconciler) isPermissionSnapshotCurrent(ctx context.Contex
 		Kind:    "PermissionSnapshot",
 	})
 	psKey := types.NamespacedName{
-		Name:      pe.Spec.TargetClusterRef,
-		Namespace: pe.Namespace,
+		Name:      "snapshot-" + pe.Spec.TargetClusterRef,
+		Namespace: "seam-system",
 	}
 	if err := r.Client.Get(ctx, psKey, ps); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -538,7 +539,7 @@ func (r *PackExecutionReconciler) isPermissionSnapshotCurrent(ctx context.Contex
 		if !ok {
 			continue
 		}
-		if cond["type"] == "Current" && cond["status"] == "True" {
+		if cond["type"] == "Fresh" && cond["status"] == "True" {
 			return true, nil
 		}
 	}
@@ -547,7 +548,8 @@ func (r *PackExecutionReconciler) isPermissionSnapshotCurrent(ctx context.Contex
 
 // isRBACProfileProvisioned reads the RBACProfile referenced by the PackExecution
 // via unstructured to avoid importing guardian types. Returns true if the profile
-// has provisioned=true in its status.
+// has provisioned=true in its status. RBACProfiles live exclusively in seam-system.
+// guardian-schema.md §RBACProfile.
 func (r *PackExecutionReconciler) isRBACProfileProvisioned(ctx context.Context, pe *infrav1alpha1.PackExecution) (bool, error) {
 	rp := &unstructured.Unstructured{}
 	rp.SetGroupVersionKind(schema.GroupVersionKind{
@@ -557,7 +559,7 @@ func (r *PackExecutionReconciler) isRBACProfileProvisioned(ctx context.Context, 
 	})
 	rpKey := types.NamespacedName{
 		Name:      pe.Spec.AdmissionProfileRef,
-		Namespace: pe.Namespace,
+		Namespace: "seam-system",
 	}
 	if err := r.Client.Get(ctx, rpKey, rp); err != nil {
 		if apierrors.IsNotFound(err) {

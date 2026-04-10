@@ -58,8 +58,8 @@ func allGatesSetup(t *testing.T, peName, cpName, cpVersion, clusterRef, profileR
 	pe := newPE(peName, cpName, cpVersion, cp.UID, clusterRef, profileRef, "infra-system")
 	tc := newTalosCluster(clusterRef, true)
 	rc := newRunnerConfig(clusterRef, 1) // gate 0: RunnerConfig with 1 capability
-	ps := newPermissionSnapshot(clusterRef, "infra-system", true)
-	rp := newRBACProfile(profileRef, "infra-system", true)
+	ps := newPermissionSnapshot("snapshot-"+clusterRef, "seam-system", true)
+	rp := newRBACProfile(profileRef, "seam-system", true)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
@@ -483,8 +483,8 @@ func TestGate2_PackRevoked(t *testing.T) {
 	pe := newPE(peName, cpName, cpVersion, cp.UID, clusterRef, profileRef, "infra-system")
 	tc := newTalosCluster(clusterRef, true)
 	rc := newRunnerConfig(clusterRef, 1) // gate 0 must clear to reach gate 2
-	ps := newPermissionSnapshot(clusterRef, "infra-system", true)
-	rp := newRBACProfile(profileRef, "infra-system", true)
+	ps := newPermissionSnapshot("snapshot-"+clusterRef, "seam-system", true)
+	rp := newRBACProfile(profileRef, "seam-system", true)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
@@ -544,8 +544,8 @@ func TestGate3_PermissionSnapshotOutOfSync(t *testing.T) {
 	pe := newPE(peName, cpName, cpVersion, cp.UID, clusterRef, profileRef, "infra-system")
 	tc := newTalosCluster(clusterRef, true)
 	rc := newRunnerConfig(clusterRef, 1) // gate 0 must clear to reach gate 3
-	ps := newPermissionSnapshot(clusterRef, "infra-system", false) // current=false
-	rp := newRBACProfile(profileRef, "infra-system", true)
+	ps := newPermissionSnapshot("snapshot-"+clusterRef, "seam-system", false) // fresh=false
+	rp := newRBACProfile(profileRef, "seam-system", true)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
@@ -607,8 +607,8 @@ func TestGate4_RBACProfileNotProvisioned(t *testing.T) {
 	pe := newPE(peName, cpName, cpVersion, cp.UID, clusterRef, profileRef, "infra-system")
 	tc := newTalosCluster(clusterRef, true)
 	rc := newRunnerConfig(clusterRef, 1) // gate 0 must clear to reach gate 4
-	ps := newPermissionSnapshot(clusterRef, "infra-system", true)
-	rp := newRBACProfile(profileRef, "infra-system", false) // provisioned=false
+	ps := newPermissionSnapshot("snapshot-"+clusterRef, "seam-system", true)
+	rp := newRBACProfile(profileRef, "seam-system", false) // provisioned=false
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
@@ -678,8 +678,8 @@ func TestConductorReady_ManagementClusterFallback_SeamSystem(t *testing.T) {
 	tc.SetNamespace("seam-system") // override the default seam-tenant-* namespace
 
 	rc := newRunnerConfig(clusterRef, 1)
-	ps := newPermissionSnapshot(clusterRef, "infra-system", true)
-	rp := newRBACProfile(profileRef, "infra-system", true)
+	ps := newPermissionSnapshot("snapshot-"+clusterRef, "seam-system", true)
+	rp := newRBACProfile(profileRef, "seam-system", true)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).

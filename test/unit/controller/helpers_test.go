@@ -161,9 +161,9 @@ func newPermissionSnapshot(name, namespace string, current bool) *unstructured.U
 	}
 	_ = unstructured.SetNestedSlice(ps.Object, []interface{}{
 		map[string]interface{}{
-			"type":   "Current",
+			"type":   "Fresh",
 			"status": status,
-			"reason": "SnapshotCurrent",
+			"reason": "SnapshotFresh",
 		},
 	}, "status", "conditions")
 	return ps
