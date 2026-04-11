@@ -716,6 +716,12 @@ func (r *PackExecutionReconciler) buildPackDeployJob(
 				Spec: corev1.PodSpec{
 					ServiceAccountName: wrapperRunnerServiceAccount,
 					RestartPolicy:      corev1.RestartPolicyNever,
+					SecurityContext: &corev1.PodSecurityContext{
+						RunAsNonRoot: boolPtr(true),
+						SeccompProfile: &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeRuntimeDefault,
+						},
+					},
 					Volumes: []corev1.Volume{
 						{
 							Name: "kubeconfig",
@@ -745,6 +751,16 @@ func (r *PackExecutionReconciler) buildPackDeployJob(
 									Name:      "kubeconfig",
 									MountPath: "/var/run/secrets/kubeconfig",
 									ReadOnly:  true,
+								},
+							},
+							SecurityContext: &corev1.SecurityContext{
+								AllowPrivilegeEscalation: boolPtr(false),
+								Capabilities: &corev1.Capabilities{
+									Drop: []corev1.Capability{"ALL"},
+								},
+								RunAsNonRoot: boolPtr(true),
+								SeccompProfile: &corev1.SeccompProfile{
+									Type: corev1.SeccompProfileTypeRuntimeDefault,
 								},
 							},
 						},
