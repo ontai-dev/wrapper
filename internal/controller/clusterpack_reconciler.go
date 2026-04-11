@@ -12,10 +12,16 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	infrav1alpha1 "github.com/ontai-dev/wrapper/api/v1alpha1"
 )
@@ -218,15 +224,38 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		tenantNS := "seam-tenant-" + clusterName
 		rcName := cp.Name + "-" + clusterName
 
-		// Skip if PackInstance already exists — pack already delivered to this cluster.
+		// Check whether a PackInstance already exists for this (pack, cluster) pair.
+		// If it does and the version matches the current ClusterPack, delivery is
+		// already complete — skip. If versions differ, an upgrade is needed: delete
+		// the existing RunnerConfig (if any) so a fresh one is created below.
 		existingPI := &infrav1alpha1.PackInstance{}
 		piName := cp.Name + "-" + clusterName
-		if err := r.Client.Get(ctx, client.ObjectKey{Name: piName, Namespace: tenantNS}, existingPI); err == nil {
-			logger.Info("PackInstance exists — skipping RunnerConfig creation",
-				"pack", cp.Name, "cluster", clusterName)
-			continue
-		} else if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, fmt.Errorf("get PackInstance %s/%s: %w", tenantNS, piName, err)
+		piErr := r.Client.Get(ctx, client.ObjectKey{Name: piName, Namespace: tenantNS}, existingPI)
+		if piErr == nil {
+			if existingPI.Spec.Version == cp.Spec.Version {
+				logger.Info("PackInstance exists with current version — skipping RunnerConfig creation",
+					"pack", cp.Name, "cluster", clusterName, "version", cp.Spec.Version)
+				continue
+			}
+			// Version mismatch: delete the old RunnerConfig (if present) so the new
+			// one created below replaces it with updated version labels.
+			logger.Info("PackInstance version mismatch — triggering upgrade",
+				"pack", cp.Name, "cluster", clusterName,
+				"currentVersion", existingPI.Spec.Version, "targetVersion", cp.Spec.Version)
+			oldRC := &unstructured.Unstructured{}
+			oldRC.SetGroupVersionKind(schema.GroupVersionKind{
+				Group: "runner.ontai.dev", Version: "v1alpha1", Kind: "RunnerConfig",
+			})
+			if err := r.Client.Get(ctx, client.ObjectKey{Name: rcName, Namespace: tenantNS}, oldRC); err == nil {
+				if err := r.Client.Delete(ctx, oldRC); err != nil && !apierrors.IsNotFound(err) {
+					return ctrl.Result{}, fmt.Errorf("delete old RunnerConfig for upgrade %s/%s: %w", tenantNS, rcName, err)
+				}
+			} else if !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, fmt.Errorf("get RunnerConfig for upgrade check %s/%s: %w", tenantNS, rcName, err)
+			}
+			// Fall through to create a new RunnerConfig with the current version.
+		} else if !apierrors.IsNotFound(piErr) {
+			return ctrl.Result{}, fmt.Errorf("get PackInstance %s/%s: %w", tenantNS, piName, piErr)
 		}
 
 		// Skip if RunnerConfig already exists — Conductor has it in flight.
@@ -359,9 +388,53 @@ func removeString(slice []string, s string) []string {
 }
 
 // SetupWithManager registers ClusterPackReconciler as the controller for ClusterPack.
+//
+// Predicate on the primary source: OR of GenerationChangedPredicate and
+// AnnotationChangedPredicate. GenerationChangedPredicate alone would miss
+// conductor signature annotation writes (which don't bump generation) and
+// manual retrigger annotations applied by operators.
+//
+// Watches PackInstance with a delete-only predicate. When a PackInstance is
+// deleted, the reconciler is notified so it can check whether redelivery is
+// needed and recreate the RunnerConfig. WS1.
 func (r *ClusterPackReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	packInstanceDeletePredicate := predicate.Funcs{
+		CreateFunc:  func(_ event.CreateEvent) bool { return false },
+		UpdateFunc:  func(_ event.UpdateEvent) bool { return false },
+		DeleteFunc:  func(_ event.DeleteEvent) bool { return true },
+		GenericFunc: func(_ event.GenericEvent) bool { return false },
+	}
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&infrav1alpha1.ClusterPack{}).
+		For(&infrav1alpha1.ClusterPack{}, builder.WithPredicates(predicate.Or(
+			predicate.GenerationChangedPredicate{},
+			predicate.AnnotationChangedPredicate{},
+		))).
 		Owns(&batchv1.Job{}).
+		Watches(&infrav1alpha1.PackInstance{},
+			handler.EnqueueRequestsFromMapFunc(r.mapPackInstanceToClusterPack),
+			builder.WithPredicates(packInstanceDeletePredicate),
+		).
 		Complete(r)
+}
+
+// mapPackInstanceToClusterPack maps a PackInstance event to the ClusterPack it
+// references. Reads spec.clusterPackRef (the ClusterPack name) and returns a
+// reconcile request for that ClusterPack in the same namespace as the PackInstance.
+// Used by the WS1 delete watch so the ClusterPackReconciler re-evaluates whether
+// redelivery RunnerConfig creation is needed.
+func (r *ClusterPackReconciler) mapPackInstanceToClusterPack(
+	_ context.Context,
+	obj client.Object,
+) []reconcile.Request {
+	pi, ok := obj.(*infrav1alpha1.PackInstance)
+	if !ok {
+		return nil
+	}
+	cpName := pi.Spec.ClusterPackRef
+	if cpName == "" {
+		return nil
+	}
+	return []reconcile.Request{
+		{NamespacedName: types.NamespacedName{Name: cpName, Namespace: pi.Namespace}},
+	}
 }

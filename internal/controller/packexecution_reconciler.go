@@ -226,19 +226,22 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, fmt.Errorf("failed to get ClusterPack %s: %w", cpKey, err)
 	}
 
-	// Verify version matches to guard against name reuse.
+	// WS4 — Version mismatch: the PackExecution was created against an older
+	// ClusterPack version. Delete it so the ClusterPackReconciler can recreate
+	// the RunnerConfig with the current version and conductor can create a fresh
+	// PackExecution. The deferred status patch will receive a NotFound error on
+	// the deleted object, which is already silently ignored.
 	if cp.Spec.Version != pe.Spec.ClusterPackRef.Version {
-		msg := fmt.Sprintf("ClusterPack version mismatch: expected %q, found %q.",
-			pe.Spec.ClusterPackRef.Version, cp.Spec.Version)
-		infrav1alpha1.SetCondition(
-			&pe.Status.Conditions,
-			infrav1alpha1.ConditionTypePackExecutionFailed,
-			metav1.ConditionTrue,
-			infrav1alpha1.ReasonJobFailed,
-			msg,
-			pe.Generation,
-		)
-		r.Recorder.Event(pe, corev1.EventTypeWarning, "ClusterPackVersionMismatch", msg)
+		logger.Info("PackExecution version mismatch — deleting stale PackExecution",
+			"name", pe.Name,
+			"peVersion", pe.Spec.ClusterPackRef.Version,
+			"cpVersion", cp.Spec.Version)
+		r.Recorder.Event(pe, corev1.EventTypeWarning, "StalePackExecutionDeleted",
+			fmt.Sprintf("PackExecution %q references ClusterPack version %q but current is %q — deleting stale object.",
+				pe.Name, pe.Spec.ClusterPackRef.Version, cp.Spec.Version))
+		if err := r.Client.Delete(ctx, pe); err != nil && !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, fmt.Errorf("delete stale PackExecution %s: %w", pe.Name, err)
+		}
 		return ctrl.Result{}, nil
 	}
 
@@ -482,6 +485,26 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			}
 			logger.Info("PackInstance created or already exists",
 				"name", piName, "namespace", piNamespace)
+
+			// WS2 — Delete the pack-deploy RunnerConfig that triggered this
+			// PackExecution. Its purpose is fulfilled once the PackInstance is
+			// created. The ClusterPackReconciler will recreate it if redelivery
+			// is ever needed (e.g. after a version upgrade or PackInstance deletion).
+			// NotFound is silently ignored — the RunnerConfig may already be gone
+			// if the ClusterPackReconciler ran a concurrent cleanup.
+			deliveryRCName := pe.Spec.ClusterPackRef.Name + "-" + pe.Spec.TargetClusterRef
+			deliveryRCNS := "seam-tenant-" + pe.Spec.TargetClusterRef
+			deliveryRC := &unstructured.Unstructured{}
+			deliveryRC.SetGroupVersionKind(schema.GroupVersionKind{
+				Group: "runner.ontai.dev", Version: "v1alpha1", Kind: "RunnerConfig",
+			})
+			deliveryRC.SetName(deliveryRCName)
+			deliveryRC.SetNamespace(deliveryRCNS)
+			if err := r.Client.Delete(ctx, deliveryRC); err != nil && !apierrors.IsNotFound(err) {
+				logger.Error(err, "failed to delete pack-deploy RunnerConfig after PackInstance created",
+					"runnerConfig", deliveryRCName, "namespace", deliveryRCNS)
+			}
+
 			return ctrl.Result{}, nil
 		}
 
