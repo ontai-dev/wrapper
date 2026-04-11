@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -15,9 +16,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	infrav1alpha1 "github.com/ontai-dev/wrapper/api/v1alpha1"
 )
@@ -51,22 +55,18 @@ const (
 	gateRequeueInterval = 30 * time.Second
 
 	// wrapperRunnerServiceAccount is the ServiceAccount used by pack-deploy Jobs.
+	// The ServiceAccount must exist in the Job's namespace (seam-tenant-{clusterRef}).
 	// wrapper-design.md §4.
 	wrapperRunnerServiceAccount = "wrapper-runner"
-
-	// wrapperRunnerNamespace is the namespace where the runner ServiceAccount lives.
-	// Conductor execute-mode Jobs submitted by Wrapper run in ont-system.
-	wrapperRunnerNamespace = "ont-system"
 
 	// conductorImageEnvVar is the env var the operator reads for the conductor image.
 	// Defaults to the local dev registry if not set.
 	conductorImageDefault = "10.20.0.1:5000/ontai-dev/conductor-execute:dev"
 
-	// kubeconfigSecretName is the kubeconfig Secret in ont-system mounted by pack-deploy Jobs.
+	// kubeconfigSecretName is the name of the kubeconfig Secret mounted by pack-deploy Jobs.
+	// The Secret lives in the Job's own namespace (seam-tenant-{clusterRef}) — Platform
+	// copies it there from seam-system as part of cluster onboarding. WS4.
 	kubeconfigSecretName = "target-cluster-kubeconfig"
-
-	// kubeconfigSecretNamespace is the namespace where kubeconfig Secrets live.
-	kubeconfigSecretNamespace = "ont-system"
 )
 
 // PackExecutionReconciler watches PackExecution CRs and manages the 5-gate check
@@ -473,6 +473,7 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				},
 				Spec: infrav1alpha1.PackInstanceSpec{
 					ClusterPackRef:   pe.Spec.ClusterPackRef.Name,
+					Version:          cp.Spec.Version, // WS6: carry version for DSNSReconciler
 					TargetClusterRef: pe.Spec.TargetClusterRef,
 				},
 			}
@@ -780,10 +781,79 @@ func packDeployJobName(pe *infrav1alpha1.PackExecution) string {
 func boolPtr(b bool) *bool { return &b }
 
 // SetupWithManager registers PackExecutionReconciler as the controller for PackExecution.
+// WS3: Watches PermissionSnapshot and RBACProfile so the reconciler is triggered
+// immediately when gates clear, instead of waiting for the 30s gateRequeueInterval.
+// GenerationChangedPredicate is scoped to the primary For source only — status-only
+// changes on watched objects (which have stable generation) must still trigger.
 func (r *PackExecutionReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	psObj := &unstructured.Unstructured{}
+	psObj.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "security.ontai.dev",
+		Version: "v1alpha1",
+		Kind:    "PermissionSnapshot",
+	})
+	rpObj := &unstructured.Unstructured{}
+	rpObj.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "security.ontai.dev",
+		Version: "v1alpha1",
+		Kind:    "RBACProfile",
+	})
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&infrav1alpha1.PackExecution{}).
+		For(&infrav1alpha1.PackExecution{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Owns(&batchv1.Job{}).
-		WithEventFilter(predicate.GenerationChangedPredicate{}).
+		Watches(psObj, handler.EnqueueRequestsFromMapFunc(r.mapSnapshotToPackExecutions)).
+		Watches(rpObj, handler.EnqueueRequestsFromMapFunc(r.mapRBACProfileToPackExecutions)).
 		Complete(r)
+}
+
+// mapSnapshotToPackExecutions maps a PermissionSnapshot update to the PackExecution
+// requests in the corresponding tenant namespace. PermissionSnapshot names follow
+// the convention "snapshot-{clusterRef}". Enqueues all PackExecutions in
+// seam-tenant-{clusterRef} that reference the same targetClusterRef. WS3.
+func (r *PackExecutionReconciler) mapSnapshotToPackExecutions(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
+	clusterRef := strings.TrimPrefix(obj.GetName(), "snapshot-")
+	if clusterRef == obj.GetName() {
+		// Not a snapshot-{cluster} name pattern — ignore.
+		return nil
+	}
+	ns := "seam-tenant-" + clusterRef
+	peList := &infrav1alpha1.PackExecutionList{}
+	if err := r.Client.List(ctx, peList, client.InNamespace(ns)); err != nil {
+		return nil
+	}
+	var requests []reconcile.Request
+	for _, pe := range peList.Items {
+		if pe.Spec.TargetClusterRef == clusterRef {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pe.Name, Namespace: pe.Namespace},
+			})
+		}
+	}
+	return requests
+}
+
+// mapRBACProfileToPackExecutions maps an RBACProfile update to PackExecution requests
+// whose admissionProfileRef matches the profile name. Lists PackExecutions across all
+// namespaces since the profile name is the same for all clusters it governs. WS3.
+func (r *PackExecutionReconciler) mapRBACProfileToPackExecutions(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
+	profileName := obj.GetName()
+	peList := &infrav1alpha1.PackExecutionList{}
+	if err := r.Client.List(ctx, peList); err != nil {
+		return nil
+	}
+	var requests []reconcile.Request
+	for _, pe := range peList.Items {
+		if pe.Spec.AdmissionProfileRef == profileName {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pe.Name, Namespace: pe.Namespace},
+			})
+		}
+	}
+	return requests
 }

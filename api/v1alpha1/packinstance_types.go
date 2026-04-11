@@ -83,6 +83,12 @@ type PackInstanceSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	ClusterPackRef string `json:"clusterPackRef"`
 
+	// Version is the semantic version of the ClusterPack that was delivered.
+	// Set from ClusterPack.spec.version at PackInstance creation time.
+	// Used by DSNSReconciler to emit pack.{name}.{version}.wrapper.{cluster} DNS records.
+	// +optional
+	Version string `json:"version,omitempty"`
+
 	// TargetClusterRef is the name of the TalosCluster CR to which this pack
 	// has been delivered.
 	// +kubebuilder:validation:MinLength=1
