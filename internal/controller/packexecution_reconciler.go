@@ -713,6 +713,8 @@ func (r *PackExecutionReconciler) buildPackDeployJob(
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			Completions:             int32Ptr(1),
+			BackoffLimit:            int32Ptr(0),
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					ServiceAccountName: wrapperRunnerServiceAccount,
@@ -779,6 +781,8 @@ func packDeployJobName(pe *infrav1alpha1.PackExecution) string {
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+func int32Ptr(i int32) *int32 { return &i }
 
 // SetupWithManager registers PackExecutionReconciler as the controller for PackExecution.
 // WS3: Watches PermissionSnapshot and RBACProfile so the reconciler is triggered
