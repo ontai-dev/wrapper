@@ -281,9 +281,10 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				"name":      rcName,
 				"namespace": tenantNS,
 				"labels": map[string]interface{}{
-					"platform.ontai.dev/cluster":  clusterName,
-					"infra.ontai.dev/pack":         cp.Name,
-					"infra.ontai.dev/pack-version": cp.Spec.Version,
+					"platform.ontai.dev/cluster":       clusterName,
+					"infra.ontai.dev/pack":              cp.Name,
+					"infra.ontai.dev/pack-version":      cp.Spec.Version,
+					"infra.ontai.dev/admission-profile": "rbac-wrapper",
 				},
 			},
 			"spec": map[string]interface{}{
