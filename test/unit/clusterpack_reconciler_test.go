@@ -33,8 +33,9 @@ func newClusterPackScheme(t *testing.T) *runtime.Scheme {
 func newClusterPack(name, namespace, version string) *infrav1alpha1.ClusterPack {
 	return &infrav1alpha1.ClusterPack{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
+			Name:       name,
+			Namespace:  namespace,
+			Finalizers: []string{"infra.ontai.dev/clusterpack-cleanup"},
 		},
 		Spec: infrav1alpha1.ClusterPackSpec{
 			Version: version,

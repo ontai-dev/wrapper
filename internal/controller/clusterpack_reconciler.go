@@ -26,6 +26,11 @@ import (
 // INV-026: signing is management cluster conductor's responsibility only.
 const packSignatureAnnotation = "ontai.dev/pack-signature"
 
+// clusterPackFinalizer is added to every ClusterPack on first reconcile.
+// On deletion it triggers cleanup of all PackInstances and RunnerConfigs
+// derived from this ClusterPack before the object is removed from etcd.
+const clusterPackFinalizer = "infra.ontai.dev/clusterpack-cleanup"
+
 // ClusterPackReconciler watches ClusterPack CRs and manages their signing lifecycle
 // and immutability enforcement.
 //
@@ -50,6 +55,8 @@ type ClusterPackReconciler struct {
 // +kubebuilder:rbac:groups=infra.ontai.dev,resources=clusterpacks,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=infra.ontai.dev,resources=clusterpacks/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=infra.ontai.dev,resources=clusterpacks/finalizers,verbs=update
+// +kubebuilder:rbac:groups=infra.ontai.dev,resources=packinstances,verbs=get;list;delete
+// +kubebuilder:rbac:groups=runner.ontai.dev,resources=runnerconfigs,verbs=get;list;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -63,6 +70,20 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, fmt.Errorf("failed to get ClusterPack %s: %w", req.NamespacedName, err)
+	}
+
+	// Step A1 — Finalizer management.
+	// If the ClusterPack is being deleted, run cleanup and return.
+	// Otherwise, ensure the finalizer is present before any further reconciliation.
+	if !cp.DeletionTimestamp.IsZero() {
+		return r.handleClusterPackDeletion(ctx, cp)
+	}
+	if !containsString(cp.Finalizers, clusterPackFinalizer) {
+		cp.Finalizers = append(cp.Finalizers, clusterPackFinalizer)
+		if err := r.Client.Update(ctx, cp); err != nil {
+			return ctrl.Result{}, fmt.Errorf("add ClusterPack finalizer: %w", err)
+		}
+		return ctrl.Result{}, nil
 	}
 
 	// Step B — Record spec snapshot annotation on first reconcile, BEFORE setting
@@ -258,6 +279,83 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// handleClusterPackDeletion runs the cleanup sequence for a ClusterPack that has
+// a non-zero DeletionTimestamp:
+//  1. Delete all PackInstances whose spec.clusterPackRef matches cp.Name.
+//  2. Delete all RunnerConfigs labeled infra.ontai.dev/pack=cp.Name across
+//     seam-tenant-* namespaces (listed cluster-wide; namespace filter is applied
+//     by Kubernetes label selector).
+//  3. Remove the clusterPackFinalizer so the API server can delete the object.
+func (r *ClusterPackReconciler) handleClusterPackDeletion(ctx context.Context, cp *infrav1alpha1.ClusterPack) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	// 1. Delete PackInstances matching spec.clusterPackRef == cp.Name.
+	// PackInstances have no registered field index on spec.clusterPackRef, so list
+	// all PackInstances cluster-wide and filter in memory.
+	piList := &infrav1alpha1.PackInstanceList{}
+	if err := r.Client.List(ctx, piList); err != nil {
+		return ctrl.Result{}, fmt.Errorf("list PackInstances for ClusterPack %s cleanup: %w", cp.Name, err)
+	}
+	for i := range piList.Items {
+		pi := &piList.Items[i]
+		if pi.Spec.ClusterPackRef != cp.Name {
+			continue
+		}
+		if err := r.Client.Delete(ctx, pi); err != nil && !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, fmt.Errorf("delete PackInstance %s/%s: %w", pi.Namespace, pi.Name, err)
+		}
+		logger.Info("deleted PackInstance during ClusterPack cleanup",
+			"packInstance", pi.Name, "namespace", pi.Namespace, "clusterPack", cp.Name)
+	}
+
+	// 2. Delete RunnerConfigs labeled infra.ontai.dev/pack=cp.Name.
+	// Use unstructured list because RunnerConfig type is from an external module.
+	rcList := &unstructured.UnstructuredList{}
+	rcList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: "runner.ontai.dev", Version: "v1alpha1", Kind: "RunnerConfigList",
+	})
+	if err := r.Client.List(ctx, rcList, client.MatchingLabels{"infra.ontai.dev/pack": cp.Name}); err != nil {
+		return ctrl.Result{}, fmt.Errorf("list RunnerConfigs for ClusterPack %s cleanup: %w", cp.Name, err)
+	}
+	for i := range rcList.Items {
+		rc := &rcList.Items[i]
+		if err := r.Client.Delete(ctx, rc); err != nil && !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, fmt.Errorf("delete RunnerConfig %s/%s: %w", rc.GetNamespace(), rc.GetName(), err)
+		}
+		logger.Info("deleted RunnerConfig during ClusterPack cleanup",
+			"runnerConfig", rc.GetName(), "namespace", rc.GetNamespace(), "clusterPack", cp.Name)
+	}
+
+	// 3. Remove the finalizer so the API server can delete the ClusterPack object.
+	cp.Finalizers = removeString(cp.Finalizers, clusterPackFinalizer)
+	if err := r.Client.Update(ctx, cp); err != nil {
+		return ctrl.Result{}, fmt.Errorf("remove ClusterPack finalizer: %w", err)
+	}
+	logger.Info("ClusterPack cleanup complete — finalizer removed", "clusterPack", cp.Name)
+	return ctrl.Result{}, nil
+}
+
+// containsString reports whether slice contains s.
+func containsString(slice []string, s string) bool {
+	for _, v := range slice {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// removeString returns a copy of slice with all occurrences of s removed.
+func removeString(slice []string, s string) []string {
+	out := make([]string, 0, len(slice))
+	for _, v := range slice {
+		if v != s {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // SetupWithManager registers ClusterPackReconciler as the controller for ClusterPack.
