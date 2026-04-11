@@ -62,6 +62,7 @@ type ClusterPackReconciler struct {
 // +kubebuilder:rbac:groups=infra.ontai.dev,resources=clusterpacks/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=infra.ontai.dev,resources=clusterpacks/finalizers,verbs=update
 // +kubebuilder:rbac:groups=infra.ontai.dev,resources=packinstances,verbs=get;list;delete
+// +kubebuilder:rbac:groups=infra.ontai.dev,resources=packexecutions,verbs=list;delete
 // +kubebuilder:rbac:groups=runner.ontai.dev,resources=runnerconfigs,verbs=get;list;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -189,7 +190,7 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		r.Recorder.Event(cp, corev1.EventTypeNormal, "PackSigned", "ClusterPack signed and now available.")
 		logger.Info("ClusterPack transitioned to Available",
 			"name", cp.Name, "namespace", cp.Namespace)
-		return ctrl.Result{}, nil
+		// Fall through to Step I — provision RunnerConfigs in the same reconcile pass.
 	}
 
 	// Step H — Not yet signed. Ensure SignaturePending condition and requeue.
@@ -317,7 +318,9 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 //  2. Delete all RunnerConfigs labeled infra.ontai.dev/pack=cp.Name across
 //     seam-tenant-* namespaces (listed cluster-wide; namespace filter is applied
 //     by Kubernetes label selector).
-//  3. Remove the clusterPackFinalizer so the API server can delete the object.
+//  3. Delete all PackExecutions whose spec.clusterPackRef.name matches cp.Name
+//     (listed cluster-wide, filtered in memory — no field index registered).
+//  4. Remove the clusterPackFinalizer so the API server can delete the object.
 func (r *ClusterPackReconciler) handleClusterPackDeletion(ctx context.Context, cp *infrav1alpha1.ClusterPack) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
@@ -358,7 +361,26 @@ func (r *ClusterPackReconciler) handleClusterPackDeletion(ctx context.Context, c
 			"runnerConfig", rc.GetName(), "namespace", rc.GetNamespace(), "clusterPack", cp.Name)
 	}
 
-	// 3. Remove the finalizer so the API server can delete the ClusterPack object.
+	// 3. Delete PackExecutions whose spec.clusterPackRef.name matches cp.Name.
+	// PackExecution has no registered field index on spec.clusterPackRef.name, so list
+	// all cluster-wide and filter in memory. wrapper-schema.md §3 delivery chain.
+	peList := &infrav1alpha1.PackExecutionList{}
+	if err := r.Client.List(ctx, peList); err != nil {
+		return ctrl.Result{}, fmt.Errorf("list PackExecutions for ClusterPack %s cleanup: %w", cp.Name, err)
+	}
+	for i := range peList.Items {
+		pe := &peList.Items[i]
+		if pe.Spec.ClusterPackRef.Name != cp.Name {
+			continue
+		}
+		if err := r.Client.Delete(ctx, pe); err != nil && !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, fmt.Errorf("delete PackExecution %s/%s: %w", pe.Namespace, pe.Name, err)
+		}
+		logger.Info("deleted PackExecution during ClusterPack cleanup",
+			"packExecution", pe.Name, "namespace", pe.Namespace, "clusterPack", cp.Name)
+	}
+
+	// 4. Remove the finalizer so the API server can delete the ClusterPack object.
 	cp.Finalizers = removeString(cp.Finalizers, clusterPackFinalizer)
 	if err := r.Client.Update(ctx, cp); err != nil {
 		return ctrl.Result{}, fmt.Errorf("remove ClusterPack finalizer: %w", err)
