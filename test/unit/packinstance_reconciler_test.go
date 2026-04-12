@@ -304,7 +304,7 @@ func newSucceededPackExecution(name, namespace, packName, packVersion, clusterRe
 func TestPackInstanceReconciler_ReadyWhenPackExecutionSucceeded(t *testing.T) {
 	s := newPackInstanceScheme(t)
 	pi := newPackInstance("pi-pe-ready", "infra-system", "my-pack", "cluster-a")
-	pe := newSucceededPackExecution("pe-1", "infra-system", "my-pack", "1.2.3", "cluster-a")
+	pe := newSucceededPackExecution("pe-1", "infra-system", "my-pack", "v1.2.3", "cluster-a")
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(pi).
@@ -343,7 +343,7 @@ func TestPackInstanceReconciler_ReadyWhenPackExecutionSucceeded(t *testing.T) {
 	if readyCond.Reason != infrav1alpha1.ReasonPackDelivered {
 		t.Errorf("expected reason PackDelivered, got %q", readyCond.Reason)
 	}
-	wantMsg := "Pack my-pack v1.2.3 successfully delivered to cluster-a."
+	wantMsg := "Pack my-pack v1.2.3 successfully delivered to cluster-a." // version already has v prefix
 	if readyCond.Message != wantMsg {
 		t.Errorf("Ready message mismatch\ngot:  %q\nwant: %q", readyCond.Message, wantMsg)
 	}

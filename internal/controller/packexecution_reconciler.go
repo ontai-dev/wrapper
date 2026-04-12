@@ -486,25 +486,6 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			logger.Info("PackInstance created or already exists",
 				"name", piName, "namespace", piNamespace)
 
-			// WS2 — Delete the pack-deploy RunnerConfig that triggered this
-			// PackExecution. Its purpose is fulfilled once the PackInstance is
-			// created. The ClusterPackReconciler will recreate it if redelivery
-			// is ever needed (e.g. after a version upgrade or PackInstance deletion).
-			// NotFound is silently ignored — the RunnerConfig may already be gone
-			// if the ClusterPackReconciler ran a concurrent cleanup.
-			deliveryRCName := pe.Spec.ClusterPackRef.Name + "-" + pe.Spec.TargetClusterRef
-			deliveryRCNS := "seam-tenant-" + pe.Spec.TargetClusterRef
-			deliveryRC := &unstructured.Unstructured{}
-			deliveryRC.SetGroupVersionKind(schema.GroupVersionKind{
-				Group: "runner.ontai.dev", Version: "v1alpha1", Kind: "RunnerConfig",
-			})
-			deliveryRC.SetName(deliveryRCName)
-			deliveryRC.SetNamespace(deliveryRCNS)
-			if err := r.Client.Delete(ctx, deliveryRC); err != nil && !apierrors.IsNotFound(err) {
-				logger.Error(err, "failed to delete pack-deploy RunnerConfig after PackInstance created",
-					"runnerConfig", deliveryRCName, "namespace", deliveryRCNS)
-			}
-
 			return ctrl.Result{}, nil
 		}
 

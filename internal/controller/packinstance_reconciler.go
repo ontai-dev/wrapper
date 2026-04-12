@@ -112,7 +112,7 @@ func (r *PackInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			infrav1alpha1.ConditionTypePackInstanceReady,
 			metav1.ConditionTrue,
 			infrav1alpha1.ReasonPackDelivered,
-			fmt.Sprintf("Pack %s v%s successfully delivered to %s.",
+			fmt.Sprintf("Pack %s %s successfully delivered to %s.",
 				succeededPE.Spec.ClusterPackRef.Name,
 				succeededPE.Spec.ClusterPackRef.Version,
 				pi.Spec.TargetClusterRef),

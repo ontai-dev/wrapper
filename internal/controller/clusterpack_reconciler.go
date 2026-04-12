@@ -3,15 +3,14 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -62,8 +61,7 @@ type ClusterPackReconciler struct {
 // +kubebuilder:rbac:groups=infra.ontai.dev,resources=clusterpacks/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=infra.ontai.dev,resources=clusterpacks/finalizers,verbs=update
 // +kubebuilder:rbac:groups=infra.ontai.dev,resources=packinstances,verbs=get;list;delete
-// +kubebuilder:rbac:groups=infra.ontai.dev,resources=packexecutions,verbs=list;delete
-// +kubebuilder:rbac:groups=runner.ontai.dev,resources=runnerconfigs,verbs=get;list;delete
+// +kubebuilder:rbac:groups=infra.ontai.dev,resources=packexecutions,verbs=get;list;create;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -216,97 +214,70 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 	}
 
-	// Step I — RunnerConfig provisioning: create one RunnerConfig per targetCluster
-	// in seam-tenant-{clusterName} with a pack-deploy step. Idempotent: skips if
-	// PackInstance or RunnerConfig already exists for this (pack, cluster) pair.
-	// Conductor agent watches RunnerConfigs labeled infra.ontai.dev/pack and creates
-	// PackExecution from them (WS3). wrapper-schema.md §9 delivery chain.
+	// Step I — Direct PackExecution provisioning: create one PackExecution per
+	// targetCluster in seam-tenant-{clusterName}. Idempotent: skips if PackInstance
+	// with current version already exists (delivery complete) or PackExecution already
+	// exists (delivery in progress). wrapper-schema.md §9 delivery chain.
 	for _, clusterName := range cp.Spec.TargetClusters {
 		tenantNS := "seam-tenant-" + clusterName
-		rcName := cp.Name + "-" + clusterName
+		peName := cp.Name + "-" + clusterName
 
-		// Check whether a PackInstance already exists for this (pack, cluster) pair.
-		// If it does and the version matches the current ClusterPack, delivery is
-		// already complete — skip. If versions differ, an upgrade is needed: delete
-		// the existing RunnerConfig (if any) so a fresh one is created below.
+		// If PackInstance exists with current version, delivery is already complete — skip.
 		existingPI := &infrav1alpha1.PackInstance{}
-		piName := cp.Name + "-" + clusterName
-		piErr := r.Client.Get(ctx, client.ObjectKey{Name: piName, Namespace: tenantNS}, existingPI)
+		piErr := r.Client.Get(ctx, client.ObjectKey{Name: peName, Namespace: tenantNS}, existingPI)
 		if piErr == nil {
 			if existingPI.Spec.Version == cp.Spec.Version {
-				logger.Info("PackInstance exists with current version — skipping RunnerConfig creation",
+				logger.Info("PackInstance exists with current version — skipping PackExecution creation",
 					"pack", cp.Name, "cluster", clusterName, "version", cp.Spec.Version)
 				continue
 			}
-			// Version mismatch: delete the old RunnerConfig (if present) so the new
-			// one created below replaces it with updated version labels.
-			logger.Info("PackInstance version mismatch — triggering upgrade",
+			// Version mismatch: the PackExecution reconciler will delete the stale
+			// PackExecution (WS4 in packexecution_reconciler.go). Fall through so
+			// the AlreadyExists guard below handles the case where a fresh one exists.
+			logger.Info("PackInstance version mismatch — PackExecution reconciler will handle stale object",
 				"pack", cp.Name, "cluster", clusterName,
 				"currentVersion", existingPI.Spec.Version, "targetVersion", cp.Spec.Version)
-			oldRC := &unstructured.Unstructured{}
-			oldRC.SetGroupVersionKind(schema.GroupVersionKind{
-				Group: "runner.ontai.dev", Version: "v1alpha1", Kind: "RunnerConfig",
-			})
-			if err := r.Client.Get(ctx, client.ObjectKey{Name: rcName, Namespace: tenantNS}, oldRC); err == nil {
-				if err := r.Client.Delete(ctx, oldRC); err != nil && !apierrors.IsNotFound(err) {
-					return ctrl.Result{}, fmt.Errorf("delete old RunnerConfig for upgrade %s/%s: %w", tenantNS, rcName, err)
-				}
-			} else if !apierrors.IsNotFound(err) {
-				return ctrl.Result{}, fmt.Errorf("get RunnerConfig for upgrade check %s/%s: %w", tenantNS, rcName, err)
-			}
-			// Fall through to create a new RunnerConfig with the current version.
 		} else if !apierrors.IsNotFound(piErr) {
-			return ctrl.Result{}, fmt.Errorf("get PackInstance %s/%s: %w", tenantNS, piName, piErr)
+			return ctrl.Result{}, fmt.Errorf("get PackInstance %s/%s: %w", tenantNS, peName, piErr)
 		}
 
-		// Skip if RunnerConfig already exists — Conductor has it in flight.
-		existingRC := &unstructured.Unstructured{}
-		existingRC.SetGroupVersionKind(schema.GroupVersionKind{
-			Group: "runner.ontai.dev", Version: "v1alpha1", Kind: "RunnerConfig",
-		})
-		if err := r.Client.Get(ctx, client.ObjectKey{Name: rcName, Namespace: tenantNS}, existingRC); err == nil {
-			logger.Info("RunnerConfig exists — skipping creation",
+		// Skip if PackExecution already exists — delivery is in progress.
+		existingPE := &infrav1alpha1.PackExecution{}
+		if err := r.Client.Get(ctx, client.ObjectKey{Name: peName, Namespace: tenantNS}, existingPE); err == nil {
+			logger.Info("PackExecution exists — skipping creation",
 				"pack", cp.Name, "cluster", clusterName)
 			continue
 		} else if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, fmt.Errorf("get RunnerConfig %s/%s: %w", tenantNS, rcName, err)
+			return ctrl.Result{}, fmt.Errorf("get PackExecution %s/%s: %w", tenantNS, peName, err)
 		}
 
-		// Create RunnerConfig with pack-deploy step in seam-tenant-{clusterName}.
-		// Labels platform.ontai.dev/cluster and infra.ontai.dev/pack enable
-		// Conductor agent to find and act on this RunnerConfig. WS3.
-		newRC := &unstructured.Unstructured{Object: map[string]interface{}{
-			"apiVersion": "runner.ontai.dev/v1alpha1",
-			"kind":       "RunnerConfig",
-			"metadata": map[string]interface{}{
-				"name":      rcName,
-				"namespace": tenantNS,
-				"labels": map[string]interface{}{
-					"platform.ontai.dev/cluster":       clusterName,
-					"infra.ontai.dev/pack":              cp.Name,
-					"infra.ontai.dev/pack-version":      cp.Spec.Version,
-					"infra.ontai.dev/admission-profile": "rbac-wrapper",
+		// Create PackExecution directly for pack delivery to this cluster.
+		newPE := &infrav1alpha1.PackExecution{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      peName,
+				Namespace: tenantNS,
+				Labels: map[string]string{
+					"infra.ontai.dev/pack":         cp.Name,
+					"infra.ontai.dev/pack-version":  cp.Spec.Version,
+					"platform.ontai.dev/cluster":    clusterName,
 				},
 			},
-			"spec": map[string]interface{}{
-				"clusterRef":  clusterName,
-				"runnerImage": conductorImageDefault,
-				"steps": []interface{}{
-					map[string]interface{}{
-						"name":          "pack-deploy",
-						"capability":    "pack-deploy",
-						"haltOnFailure": true,
-					},
+			Spec: infrav1alpha1.PackExecutionSpec{
+				ClusterPackRef: infrav1alpha1.ClusterPackRef{
+					Name:    cp.Name,
+					Version: cp.Spec.Version,
 				},
+				TargetClusterRef:    clusterName,
+				AdmissionProfileRef: "rbac-wrapper",
 			},
-		}}
-		if err := r.Client.Create(ctx, newRC); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, fmt.Errorf("create RunnerConfig %s/%s: %w", tenantNS, rcName, err)
 		}
-		logger.Info("RunnerConfig created for pack delivery",
-			"pack", cp.Name, "version", cp.Spec.Version, "cluster", clusterName, "runnerConfig", rcName)
-		r.Recorder.Event(cp, corev1.EventTypeNormal, "RunnerConfigCreated",
-			fmt.Sprintf("RunnerConfig %s created in %s for pack delivery to cluster %s.", rcName, tenantNS, clusterName))
+		if err := r.Client.Create(ctx, newPE); err != nil && !apierrors.IsAlreadyExists(err) {
+			return ctrl.Result{}, fmt.Errorf("create PackExecution %s/%s: %w", tenantNS, peName, err)
+		}
+		logger.Info("PackExecution created for pack delivery",
+			"pack", cp.Name, "version", cp.Spec.Version, "cluster", clusterName, "packExecution", peName)
+		r.Recorder.Event(cp, corev1.EventTypeNormal, "PackExecutionCreated",
+			fmt.Sprintf("PackExecution %s created in %s for pack delivery to cluster %s.", peName, tenantNS, clusterName))
 	}
 
 	return ctrl.Result{}, nil
@@ -315,12 +286,9 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 // handleClusterPackDeletion runs the cleanup sequence for a ClusterPack that has
 // a non-zero DeletionTimestamp:
 //  1. Delete all PackInstances whose spec.clusterPackRef matches cp.Name.
-//  2. Delete all RunnerConfigs labeled infra.ontai.dev/pack=cp.Name across
-//     seam-tenant-* namespaces (listed cluster-wide; namespace filter is applied
-//     by Kubernetes label selector).
-//  3. Delete all PackExecutions whose spec.clusterPackRef.name matches cp.Name
+//  2. Delete all PackExecutions whose spec.clusterPackRef.name matches cp.Name
 //     (listed cluster-wide, filtered in memory — no field index registered).
-//  4. Remove the clusterPackFinalizer so the API server can delete the object.
+//  3. Remove the clusterPackFinalizer so the API server can delete the object.
 func (r *ClusterPackReconciler) handleClusterPackDeletion(ctx context.Context, cp *infrav1alpha1.ClusterPack) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
@@ -343,25 +311,7 @@ func (r *ClusterPackReconciler) handleClusterPackDeletion(ctx context.Context, c
 			"packInstance", pi.Name, "namespace", pi.Namespace, "clusterPack", cp.Name)
 	}
 
-	// 2. Delete RunnerConfigs labeled infra.ontai.dev/pack=cp.Name.
-	// Use unstructured list because RunnerConfig type is from an external module.
-	rcList := &unstructured.UnstructuredList{}
-	rcList.SetGroupVersionKind(schema.GroupVersionKind{
-		Group: "runner.ontai.dev", Version: "v1alpha1", Kind: "RunnerConfigList",
-	})
-	if err := r.Client.List(ctx, rcList, client.MatchingLabels{"infra.ontai.dev/pack": cp.Name}); err != nil {
-		return ctrl.Result{}, fmt.Errorf("list RunnerConfigs for ClusterPack %s cleanup: %w", cp.Name, err)
-	}
-	for i := range rcList.Items {
-		rc := &rcList.Items[i]
-		if err := r.Client.Delete(ctx, rc); err != nil && !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, fmt.Errorf("delete RunnerConfig %s/%s: %w", rc.GetNamespace(), rc.GetName(), err)
-		}
-		logger.Info("deleted RunnerConfig during ClusterPack cleanup",
-			"runnerConfig", rc.GetName(), "namespace", rc.GetNamespace(), "clusterPack", cp.Name)
-	}
-
-	// 3. Delete PackExecutions whose spec.clusterPackRef.name matches cp.Name.
+	// 2. Delete PackExecutions whose spec.clusterPackRef.name matches cp.Name.
 	// PackExecution has no registered field index on spec.clusterPackRef.name, so list
 	// all cluster-wide and filter in memory. wrapper-schema.md §3 delivery chain.
 	peList := &infrav1alpha1.PackExecutionList{}
@@ -380,7 +330,7 @@ func (r *ClusterPackReconciler) handleClusterPackDeletion(ctx context.Context, c
 			"packExecution", pe.Name, "namespace", pe.Namespace, "clusterPack", cp.Name)
 	}
 
-	// 4. Remove the finalizer so the API server can delete the ClusterPack object.
+	// 3. Remove the finalizer so the API server can delete the ClusterPack object.
 	cp.Finalizers = removeString(cp.Finalizers, clusterPackFinalizer)
 	if err := r.Client.Update(ctx, cp); err != nil {
 		return ctrl.Result{}, fmt.Errorf("remove ClusterPack finalizer: %w", err)
@@ -419,7 +369,7 @@ func removeString(slice []string, s string) []string {
 //
 // Watches PackInstance with a delete-only predicate. When a PackInstance is
 // deleted, the reconciler is notified so it can check whether redelivery is
-// needed and recreate the RunnerConfig. WS1.
+// needed and create a fresh PackExecution.
 func (r *ClusterPackReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	packInstanceDeletePredicate := predicate.Funcs{
 		CreateFunc:  func(_ event.CreateEvent) bool { return false },
@@ -440,13 +390,14 @@ func (r *ClusterPackReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// mapPackInstanceToClusterPack maps a PackInstance event to the ClusterPack it
-// references. Reads spec.clusterPackRef (the ClusterPack name) and returns a
-// reconcile request for that ClusterPack in the same namespace as the PackInstance.
-// Used by the WS1 delete watch so the ClusterPackReconciler re-evaluates whether
-// redelivery RunnerConfig creation is needed.
+// mapPackInstanceToClusterPack maps a PackInstance delete event to the ClusterPack it
+// references. Before returning the reconcile request, deletes the corresponding
+// PackExecution so the ClusterPackReconciler creates a fresh one for redelivery
+// (WS2). The deletion is best-effort — failure is non-fatal; the reconciler handles
+// the case where the PackExecution still exists (it skips creation until the stale
+// object is gone or the version matches).
 func (r *ClusterPackReconciler) mapPackInstanceToClusterPack(
-	_ context.Context,
+	ctx context.Context,
 	obj client.Object,
 ) []reconcile.Request {
 	pi, ok := obj.(*infrav1alpha1.PackInstance)
@@ -457,6 +408,19 @@ func (r *ClusterPackReconciler) mapPackInstanceToClusterPack(
 	if cpName == "" {
 		return nil
 	}
+
+	// WS2: Delete the corresponding PackExecution so the ClusterPackReconciler
+	// creates a fresh one on the next reconcile pass.
+	ns := pi.GetNamespace()
+	clusterName := strings.TrimPrefix(ns, "seam-tenant-")
+	if clusterName != ns {
+		peName := cpName + "-" + clusterName
+		pe := &infrav1alpha1.PackExecution{}
+		if getErr := r.Client.Get(ctx, client.ObjectKey{Name: peName, Namespace: ns}, pe); getErr == nil {
+			_ = r.Client.Delete(ctx, pe)
+		}
+	}
+
 	return []reconcile.Request{
 		{NamespacedName: types.NamespacedName{Name: cpName, Namespace: pi.Namespace}},
 	}
