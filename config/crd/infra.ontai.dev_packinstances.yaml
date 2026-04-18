@@ -170,6 +170,12 @@ spec:
                   has been delivered.
                 minLength: 1
                 type: string
+              version:
+                description: |-
+                  Version is the semantic version of the ClusterPack that was delivered.
+                  Set from ClusterPack.spec.version at PackInstance creation time.
+                  Used by DSNSReconciler to emit pack.{name}.{version}.wrapper.{cluster} DNS records.
+                type: string
             required:
             - clusterPackRef
             - targetClusterRef

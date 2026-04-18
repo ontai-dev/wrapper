@@ -105,6 +105,11 @@ func (in *ClusterPackSpec) DeepCopyInto(out *ClusterPackSpec) {
 		*out = new(PackProvenance)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.TargetClusters != nil {
+		in, out := &in.TargetClusters, &out.TargetClusters
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.Lineage != nil {
 		in, out := &in.Lineage, &out.Lineage
 		*out = new(lineage.SealedCausalChain)
