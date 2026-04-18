@@ -2,7 +2,7 @@
 > API Group: infra.ontai.dev
 > Operator: Wrapper
 > Absorb before any design or implementation work touching pack compile or delivery.
-> Amended: 2026-03-30 — compile mode is a workstation/CI operation, never a cluster Job.
+> Amended: 2026-03-30 - compile mode is a workstation/CI operation, never a cluster Job.
 >   ClusterPack signing lifecycle added. PackBuild is a local spec file, not a cluster trigger.
 
 ---
@@ -26,7 +26,7 @@ happens on any cluster. This is absolute. INV-014.
 
 ## 2. The Compile / Runtime Boundary
 
-### 2.1 Compile Time — Workstation or CI/CD Pipeline
+### 2.1 Compile Time - Workstation or CI/CD Pipeline
 
 Compilation is not a cluster operation. It is a human or pipeline operation using
 conductor in compile mode as a Docker container. No management cluster connection
@@ -48,12 +48,12 @@ the management cluster. This is the only way a ClusterPack CR appears on the
 management cluster.
 
 **PackBuild is a local spec file and provenance record.** It is the human's
-authoritative declaration of source inputs — Helm chart coordinates, values,
+authoritative declaration of source inputs - Helm chart coordinates, values,
 overlay paths. It may optionally be committed to git alongside the ClusterPack
 output for audit trail. It is never applied to the management cluster as a Job
 trigger. No PackBuild controller exists on the management cluster.
 
-### 2.2 Runtime — Management Cluster (conductor Jobs via Kueue)
+### 2.2 Runtime - Management Cluster (conductor Jobs via Kueue)
 
 When a PackExecution CR is created, the Wrapper controller verifies execution
 gatekeeper conditions and submits a pack-deploy Job. The Job runs conductor, which:
@@ -79,22 +79,22 @@ The signing follows the same pattern as PermissionSnapshot signing.
 
 **Signing flow:**
 
-Step 1 — GitOps applies ClusterPack CR to the management cluster.
+Step 1 - GitOps applies ClusterPack CR to the management cluster.
 Wrapper controller detects the new ClusterPack CR with Status.Signed=false
 (absent signature annotation).
 
-Step 2 — Management cluster conductor signing loop detects the unsigned ClusterPack
+Step 2 - Management cluster conductor signing loop detects the unsigned ClusterPack
 CR. It fetches the OCI artifact, verifies the content checksum matches the CR spec,
 signs the artifact digest with the platform private key, and writes the signature
 annotation: ontai.dev/pack-signature={base64-encoded-signature}.
 Status.Signed transitions to true.
 
-Step 3 — PackExecution gate includes a signature check. The pack-deploy Job will
+Step 3 - PackExecution gate includes a signature check. The pack-deploy Job will
 not be submitted until ClusterPack Status.Signed=true. If the ClusterPack is not
 yet signed, Wrapper sets PackSignaturePending on the PackExecution status and
 requeues.
 
-Step 4 — On the target cluster, the pack-deploy Job (running conductor) fetches
+Step 4 - On the target cluster, the pack-deploy Job (running conductor) fetches
 the ClusterPack artifact and verifies the signature against the platform public key
 embedded in the conductor binary before applying any manifest. An artifact that
 fails signature verification causes immediate ExecutionFailure with SignatureInvalid
@@ -106,9 +106,9 @@ the registry without a valid signature is rejected at the Job execution layer.
 
 ---
 
-## 4. CRDs — Management Cluster
+## 4. CRDs - Management Cluster
 
-### PackBuild (Local Spec and Provenance Record — Not a Cluster CRD)
+### PackBuild (Local Spec and Provenance Record - Not a Cluster CRD)
 
 PackBuild is not a Kubernetes CRD applied to the management cluster. It is the
 human's local specification file used as input to conductor compile mode. It may
@@ -124,7 +124,7 @@ source.helm.version: the admin's version record. The single field to change when
 source.helm.values: inline structured data equivalent to the admin's values.yaml.
   Canonical record of all non-sensitive configuration values.
 source.helm.valuesSecretRef: optional path to a local file or environment variable
-  containing sensitive values — credentials, tokens, API keys. These are merged
+  containing sensitive values - credentials, tokens, API keys. These are merged
   at compile time. They never appear in the ClusterPack CR or OCI artifact metadata.
 source.kustomize.path: Kustomize overlay directory path.
 source.kustomize.secretRef: optional path to sensitive kustomize patch file.
@@ -139,7 +139,7 @@ outputDir: filesystem path where the runner writes the ClusterPack CR YAML outpu
 
 ### ClusterPack
 
-Scope: Namespaced — seam-tenant-{cluster-name}
+Scope: Namespaced - seam-tenant-{cluster-name}
 Short name: cp
 Lives in: OCI registry (artifact), git (CR YAML), management cluster (applied via GitOps).
 
@@ -152,7 +152,7 @@ Key spec fields:
 - registryRef: OCI registry URL and content digest (sha256).
 - checksum: content-addressed checksum of the full artifact manifest set.
 - sourceBuildRef: optional reference to the PackBuild spec file path in git
-  (provenance only — not a cluster object reference).
+  (provenance only - not a cluster object reference).
 - executionOrder: stage ordering derived from the compiled execution graph.
   Stages in order: rbac, storage, stateful, stateless.
 - lifecyclePolicies: resource retention rules for upgrade and delete operations.
@@ -160,7 +160,7 @@ Key spec fields:
   digest, compiler version, compilation timestamp.
 - targetClusters: list of cluster names (strings) to which this ClusterPack
   should be delivered. The ClusterPackReconciler creates one RunnerConfig per
-  entry in seam-tenant-{clusterName}. ClusterAssignment is removed — pack-to-cluster
+  entry in seam-tenant-{clusterName}. ClusterAssignment is removed - pack-to-cluster
   binding is declared directly here.
 
 ClusterPack spec never contains: Helm templates, Kustomize overlays, variable
@@ -182,7 +182,7 @@ version. The signing loop is the only process that can advance this state.
 
 ### PackExecution
 
-Scope: Namespaced — seam-tenant-{cluster-name}
+Scope: Namespaced - seam-tenant-{cluster-name}
 Short name: pe
 Named capability: pack-deploy
 
@@ -210,7 +210,7 @@ Status conditions: Pending, PackSignaturePending, Running, Succeeded, Failed.
 
 ### PackInstance
 
-Scope: Namespaced — seam-tenant-{cluster-name}
+Scope: Namespaced - seam-tenant-{cluster-name}
 Short name: pi
 
 Tracks currently deployed state of a specific pack on a specific target cluster.
@@ -229,11 +229,11 @@ Status conditions: Ready, Progressing, Drifted, DependencyBlocked.
 
 ---
 
-## 5. CRDs — Target Cluster (Agent-Managed)
+## 5. CRDs - Target Cluster (Agent-Managed)
 
 ### PackReceipt
 
-Scope: Namespaced — ont-system on target cluster.
+Scope: Namespaced - ont-system on target cluster.
 Short name: pr
 
 Local record of deployed ClusterPack versions and drift status. Created and
@@ -243,7 +243,7 @@ cluster. Never authored by humans or other controllers.
 One PackReceipt per deployed pack per target cluster. The management cluster's
 PackInstance trusts PackReceipt as the ground truth for delivery confirmation.
 
-Key fields (agent-managed): packRef, appliedAt, checksum, signatureVerified (bool —
+Key fields (agent-managed): packRef, appliedAt, checksum, signatureVerified (bool -
 set true only after the pack-deploy Job verifies the platform signature before
 applying), driftStatus (Clean or Drifted), driftDetails, lastCheckedAt.
 
@@ -292,7 +292,7 @@ reverse logic.
 
 The agent ClusterPack is the first pack applied to any target cluster. During
 bootstrap, conductor applies it directly via kube goclient without going through
-the PackExecution flow. Signature verification still occurs — the bootstrap
+the PackExecution flow. Signature verification still occurs - the bootstrap
 bootstrap sequence includes signature verification using the embedded public key
 before any manifest is applied. No PackReceipt tracking exists yet because no
 infra agent is running. This is the single documented exception to the PackExecution
@@ -310,7 +310,7 @@ The conductor on target clusters runs periodic server-side dry-run comparisons
 between the expected state from the current PackReceipt and actual live cluster
 state. Updates PackReceipt driftStatus. PackInstance on the management cluster
 reflects this via its Drifted condition. Remediation is a runner Job submitted
-via a new PackExecution — the agent never auto-remediates.
+via a new PackExecution - the agent never auto-remediates.
 
 ---
 
@@ -322,7 +322,7 @@ ClusterAssignment is removed. Pack-to-cluster binding is declared directly in
 ClusterPack.spec.targetClusters. Wrapper does not read from platform.ontai.dev.
 Reads: runner.ontai.dev/RunnerConfig status (capability confirmation).
 Writes: runner.ontai.dev/RunnerConfig (generates from ClusterPack/PackExecution
-  context via shared runner library — no PackBuild controller).
+  context via shared runner library - no PackBuild controller).
 Writes: infra.ontai.dev resources on management cluster.
 Writes: PackReceipt on target clusters via conductor.
 
@@ -346,17 +346,17 @@ until signing is complete.
 
 ---
 
-*infra.ontai.dev schema — Wrapper*
+*infra.ontai.dev schema - Wrapper*
 *Amendments:*
-*2026-03-30 — Compile mode is a workstation/CI operation, never a cluster Job.*
+*2026-03-30 - Compile mode is a workstation/CI operation, never a cluster Job.*
 *  PackBuild removed as a management cluster CRD. No PackBuild controller.*
 *  ClusterPack signing lifecycle added (Section 3). Signing is conductor responsibility.*
 *  pack-deploy Jobs use conductor (distroless). No execution seam with compile mode.*
 *  PackReceipt.signatureVerified field added. SecurityViolation condition added.*
 *  PackExecution.PackSignaturePending gate condition added.*
-*2026-04-10 — Namespace model locked: ClusterPack, PackExecution, PackInstance all live*
+*2026-04-10 - Namespace model locked: ClusterPack, PackExecution, PackInstance all live*
 *  in seam-tenant-{cluster-name}, not infra-system. ClusterAssignment removed.*
-*  ClusterPack.spec.targetClusters added — pack-to-cluster binding declared directly.*
+*  ClusterPack.spec.targetClusters added - pack-to-cluster binding declared directly.*
 *  Pack delivery ownership chain locked (Section 9): ClusterPack (human/GitOps),*
 *  RunnerConfig (ClusterPackReconciler), PackExecution (Conductor agent from RunnerConfig),*
 *  PackInstance (Wrapper after Job success), PackReceipt (target Conductor).*
