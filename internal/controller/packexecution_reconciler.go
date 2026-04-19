@@ -1017,6 +1017,9 @@ func int32Ptr(i int32) *int32 { return &i }
 // SetupWithManager registers PackExecutionReconciler as the controller for PackExecution.
 // WS3: Watches PermissionSnapshot and RBACProfile so the reconciler is triggered
 // immediately when gates clear, instead of waiting for the 30s gateRequeueInterval.
+// CONDUCTOR-BL-CAPABILITY-WATCH: Watches RunnerConfig so the ConductorReady gate
+// (gate 0) re-evaluates immediately when capabilities are published to RunnerConfig
+// status, instead of waiting for the 30s gateRequeueInterval poll.
 // GenerationChangedPredicate is scoped to the primary For source only — status-only
 // changes on watched objects (which have stable generation) must still trigger.
 func (r *PackExecutionReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -1032,11 +1035,18 @@ func (r *PackExecutionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Version: "v1alpha1",
 		Kind:    "RBACProfile",
 	})
+	rcObj := &unstructured.Unstructured{}
+	rcObj.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "runner.ontai.dev",
+		Version: "v1alpha1",
+		Kind:    "RunnerConfig",
+	})
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&seamv1alpha1.InfrastructurePackExecution{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Owns(&batchv1.Job{}).
 		Watches(psObj, handler.EnqueueRequestsFromMapFunc(r.mapSnapshotToPackExecutions)).
 		Watches(rpObj, handler.EnqueueRequestsFromMapFunc(r.mapRBACProfileToPackExecutions)).
+		Watches(rcObj, handler.EnqueueRequestsFromMapFunc(r.mapRunnerConfigToPackExecutions)).
 		Complete(r)
 }
 
@@ -1130,6 +1140,37 @@ func parsePackVer(v string) [4]int {
 		out[3], _ = strconv.Atoi(parts[1])
 	}
 	return out
+}
+
+// mapRunnerConfigToPackExecutions maps a RunnerConfig update to PackExecution requests
+// in the seam-tenant-{cluster} namespace for the cluster that owns the RunnerConfig.
+// RunnerConfig lives in ont-system and is named after the cluster (e.g. "ccs-dev").
+// When capabilities are first published to RunnerConfig status, the ConductorReady
+// gate (gate 0) clears and pending PackExecutions for that cluster can proceed.
+// CONDUCTOR-BL-CAPABILITY-WATCH.
+func (r *PackExecutionReconciler) mapRunnerConfigToPackExecutions(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
+	// RunnerConfig name == cluster name; lives in ont-system.
+	if obj.GetNamespace() != "ont-system" {
+		return nil
+	}
+	clusterRef := obj.GetName()
+	ns := "seam-tenant-" + clusterRef
+	peList := &seamv1alpha1.InfrastructurePackExecutionList{}
+	if err := r.Client.List(ctx, peList, client.InNamespace(ns)); err != nil {
+		return nil
+	}
+	var requests []reconcile.Request
+	for _, pe := range peList.Items {
+		if pe.Spec.TargetClusterRef == clusterRef {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pe.Name, Namespace: pe.Namespace},
+			})
+		}
+	}
+	return requests
 }
 
 // mapRBACProfileToPackExecutions maps an RBACProfile update to PackExecution requests

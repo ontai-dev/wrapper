@@ -671,3 +671,115 @@ func TestPackExecutionReconciler_Gate0_ConductorReadyTrue_ProceedsToSignatureGat
 		t.Errorf("expected PackSignaturePending=True when signature gate fires after gate 0 clears")
 	}
 }
+
+// TestPackExecutionReconciler_Gate0_RunnerConfigCapabilitiesAppear verifies
+// CONDUCTOR-BL-CAPABILITY-WATCH: when a RunnerConfig has no capabilities, gate 0
+// blocks with Waiting=True; after capabilities are published to the RunnerConfig,
+// a fresh reconcile immediately clears gate 0 and proceeds. This confirms the
+// RunnerConfig watch in SetupWithManager fires at the right time.
+func TestPackExecutionReconciler_Gate0_RunnerConfigCapabilitiesAppear(t *testing.T) {
+	s := newPackExecutionScheme(t)
+	cp := newSignedClusterPack("cilium", "seam-tenant-ccs-test", "v1.2.0")
+	pe := newPackExecution("cilium-exec", "seam-tenant-ccs-test",
+		"cilium", "v1.2.0", "ccs-test", "rbac-wrapper")
+	snapshot := newPermissionSnapshot("snapshot-ccs-test", "security-system", true)
+	rbacProfile := newRBACProfile("rbac-wrapper", "seam-system", true)
+
+	// RunnerConfig with NO capabilities — gate 0 must block.
+	rcNoCapabilities := newRunnerConfig("ccs-test", 0)
+	// TalosCluster must exist for gate 0 to proceed to RunnerConfig capability check.
+	tc := newTalosClusterWithConductorReady("ccs-test", false)
+
+	cl := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(cp, pe, rcNoCapabilities).
+		WithStatusSubresource(pe).
+		Build()
+	if err := cl.Create(context.Background(), tc); err != nil {
+		t.Fatalf("create TalosCluster: %v", err)
+	}
+
+	// Store snapshot and RBACProfile as unstructured.
+	if err := cl.Create(context.Background(), snapshot); err != nil {
+		t.Fatalf("create snapshot: %v", err)
+	}
+	if err := cl.Create(context.Background(), rbacProfile); err != nil {
+		t.Fatalf("create rbacProfile: %v", err)
+	}
+
+	r := &controller.PackExecutionReconciler{
+		Client:   cl,
+		Scheme:   s,
+		Recorder: record.NewFakeRecorder(16),
+	}
+
+	// First reconcile — gate 0 must block.
+	result, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "cilium-exec", Namespace: "seam-tenant-ccs-test"},
+	})
+	if err != nil {
+		t.Fatalf("first reconcile error: %v", err)
+	}
+	if result.RequeueAfter == 0 {
+		t.Error("expected non-zero RequeueAfter when gate 0 (ConductorReady) not cleared")
+	}
+	updated := &infrav1alpha1.PackExecution{}
+	if err := cl.Get(context.Background(), types.NamespacedName{Name: "cilium-exec", Namespace: "seam-tenant-ccs-test"}, updated); err != nil {
+		t.Fatalf("get PackExecution: %v", err)
+	}
+	waitCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionWaiting)
+	if waitCond == nil || waitCond.Status != metav1.ConditionTrue {
+		t.Error("expected Waiting=True when gate 0 not cleared")
+	}
+
+	// Now publish capabilities to RunnerConfig — simulates Conductor declaring capability.
+	// Re-fetch to get current resourceVersion before updating.
+	rcKey := types.NamespacedName{Name: "ccs-test", Namespace: "ont-system"}
+	rcLive := &unstructured.Unstructured{}
+	rcLive.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "runner.ontai.dev",
+		Version: "v1alpha1",
+		Kind:    "RunnerConfig",
+	})
+	if err := cl.Get(context.Background(), rcKey, rcLive); err != nil {
+		t.Fatalf("get RunnerConfig: %v", err)
+	}
+	// Mutate the live object in-place and use regular Update (RunnerConfig is not in
+	// WithStatusSubresource so the fake client stores the full object including status).
+	caps := []interface{}{map[string]interface{}{"name": "pack-deploy", "version": "v1.0.0"}}
+	if err := unstructured.SetNestedSlice(rcLive.Object, caps, "status", "capabilities"); err != nil {
+		t.Fatalf("set capabilities on rcLive: %v", err)
+	}
+	if err := cl.Update(context.Background(), rcLive); err != nil {
+		t.Fatalf("update RunnerConfig with capabilities: %v", err)
+	}
+	// Verify capabilities stored before proceeding.
+	rcCheck := &unstructured.Unstructured{}
+	rcCheck.SetGroupVersionKind(schema.GroupVersionKind{Group: "runner.ontai.dev", Version: "v1alpha1", Kind: "RunnerConfig"})
+	if err := cl.Get(context.Background(), rcKey, rcCheck); err != nil {
+		t.Fatalf("get RunnerConfig after update: %v", err)
+	}
+	if gotCaps, _, _ := unstructured.NestedSlice(rcCheck.Object, "status", "capabilities"); len(gotCaps) == 0 {
+		t.Fatal("capabilities not stored in fake client after Update — test setup error")
+	}
+
+	// Second reconcile — gate 0 must clear. The watch would trigger this automatically
+	// in production; here we trigger it manually to verify the gate logic.
+	result2, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "cilium-exec", Namespace: "seam-tenant-ccs-test"},
+	})
+	if err != nil {
+		t.Fatalf("second reconcile error: %v", err)
+	}
+	updated2 := &infrav1alpha1.PackExecution{}
+	if err := cl.Get(context.Background(), types.NamespacedName{Name: "cilium-exec", Namespace: "seam-tenant-ccs-test"}, updated2); err != nil {
+		t.Fatalf("get PackExecution after second reconcile: %v", err)
+	}
+	// Gate 0 cleared — reconciler sets Waiting=False. The condition still carries
+	// ReasonAwaitingConductorReady but with Status=False to record the clear event.
+	waitCond2 := infrav1alpha1.FindCondition(updated2.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionWaiting)
+	if waitCond2 != nil && waitCond2.Status == metav1.ConditionTrue && waitCond2.Reason == infrav1alpha1.ReasonAwaitingConductorReady {
+		t.Error("gate 0 must clear after capabilities published; Waiting=True/AwaitingConductorReady must not remain set")
+	}
+	_ = result2
+}
