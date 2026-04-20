@@ -24,7 +24,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	clientevents "k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -111,7 +111,7 @@ func TestOwnershipChain_TalosClusterExists(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   buildTestScheme(t),
-		Recorder: record.NewFakeRecorder(32),
+		Recorder: clientevents.NewFakeRecorder(32),
 	}
 
 	// Assertion 1: ownership chain structure — PE has ownerRef to CP.
@@ -130,7 +130,7 @@ func TestOwnershipChain_TalosClusterExists(t *testing.T) {
 	result := reconcilePackExecution(t, r, peName, "infra-system")
 
 	// Must return without requeue (terminal success state).
-	if result.RequeueAfter != 0 || result.Requeue {
+	if result.RequeueAfter != 0 {
 		t.Errorf("expected no requeue after success, got %+v", result)
 	}
 
@@ -206,7 +206,7 @@ func TestWaitingForCluster_TalosClusterAbsent(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(32),
+		Recorder: clientevents.NewFakeRecorder(32),
 	}
 
 	result := reconcilePackExecution(t, r, peName, "infra-system")
@@ -263,7 +263,7 @@ func TestDeletion_PackExecutionNotFound_NoJobCreated(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(32),
+		Recorder: clientevents.NewFakeRecorder(32),
 	}
 
 	result, err := r.Reconcile(context.Background(), ctrl.Request{
@@ -272,7 +272,7 @@ func TestDeletion_PackExecutionNotFound_NoJobCreated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error reconciling deleted PE: %v", err)
 	}
-	if result.RequeueAfter != 0 || result.Requeue {
+	if result.RequeueAfter != 0 {
 		t.Errorf("expected no requeue for deleted PE, got %+v", result)
 	}
 
@@ -315,7 +315,7 @@ func TestDeletion_ClusterPackReconciler_NoJobsSubmitted(t *testing.T) {
 	r := &controller.ClusterPackReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(32),
+		Recorder: clientevents.NewFakeRecorder(32),
 	}
 
 	_, err := r.Reconcile(context.Background(), ctrl.Request{
@@ -365,7 +365,7 @@ func TestGate0_RunnerConfigAbsent(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(32),
+		Recorder: clientevents.NewFakeRecorder(32),
 	}
 
 	result := reconcilePackExecution(t, r, peName, "infra-system")
@@ -429,7 +429,7 @@ func TestGate1_SignaturePending(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(32),
+		Recorder: clientevents.NewFakeRecorder(32),
 	}
 
 	result := reconcilePackExecution(t, r, peName, "infra-system")
@@ -500,13 +500,13 @@ func TestGate2_PackRevoked(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(32),
+		Recorder: clientevents.NewFakeRecorder(32),
 	}
 
 	result := reconcilePackExecution(t, r, peName, "infra-system")
 
 	// No requeue — revocation requires human intervention.
-	if result.RequeueAfter != 0 || result.Requeue {
+	if result.RequeueAfter != 0 {
 		t.Errorf("expected no requeue when pack revoked (human intervention), got %+v", result)
 	}
 
@@ -561,7 +561,7 @@ func TestGate3_PermissionSnapshotOutOfSync(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(32),
+		Recorder: clientevents.NewFakeRecorder(32),
 	}
 
 	result := reconcilePackExecution(t, r, peName, "infra-system")
@@ -624,7 +624,7 @@ func TestGate4_RBACProfileNotProvisioned(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(32),
+		Recorder: clientevents.NewFakeRecorder(32),
 	}
 
 	result := reconcilePackExecution(t, r, peName, "infra-system")
@@ -701,7 +701,7 @@ func TestConductorReady_ManagementClusterFallback_SeamSystem(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(32),
+		Recorder: clientevents.NewFakeRecorder(32),
 	}
 
 	reconcilePackExecution(t, r, peName, "infra-system")
@@ -742,7 +742,7 @@ func TestConductorReady_RunnerConfigWithCapabilities_ReturnsTrue(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   buildTestScheme(t),
-		Recorder: record.NewFakeRecorder(32),
+		Recorder: clientevents.NewFakeRecorder(32),
 	}
 
 	reconcilePackExecution(t, r, peName, "infra-system")
@@ -789,7 +789,7 @@ func TestConductorReady_RunnerConfigAbsent_ReturnsFalse(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(32),
+		Recorder: clientevents.NewFakeRecorder(32),
 	}
 
 	result := reconcilePackExecution(t, r, peName, "infra-system")
@@ -846,7 +846,7 @@ func TestConductorReady_RunnerConfigEmptyCapabilities_ReturnsFalse(t *testing.T)
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(32),
+		Recorder: clientevents.NewFakeRecorder(32),
 	}
 
 	result := reconcilePackExecution(t, r, peName, "infra-system")

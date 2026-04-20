@@ -12,7 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	clientevents "k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -47,7 +47,7 @@ const driftCheckInterval = 60 * time.Second
 type PackInstanceReconciler struct {
 	Client   client.Client
 	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Recorder clientevents.EventRecorder
 }
 
 // Reconcile is the main reconciliation loop for PackInstance.
@@ -186,7 +186,7 @@ func (r *PackInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			"SecurityViolation: signature verification failed.",
 			pi.Generation,
 		)
-		r.Recorder.Event(pi, corev1.EventTypeWarning, "SecurityViolation", msg)
+		r.Recorder.Eventf(pi, nil, corev1.EventTypeWarning, "SecurityViolation", "SecurityViolation", msg)
 		logger.Error(fmt.Errorf("security violation"), msg,
 			"name", pi.Name, "namespace", pi.Namespace)
 		// Requeue to poll for resolution. Human intervention is required but
@@ -218,8 +218,8 @@ func (r *PackInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			fmt.Sprintf("Conductor drift detection reports drift: %s", driftSummary),
 			pi.Generation,
 		)
-		r.Recorder.Event(pi, corev1.EventTypeWarning, "DriftDetected",
-			fmt.Sprintf("Pack drift detected on cluster %q: %s", pi.Spec.TargetClusterRef, driftSummary))
+		r.Recorder.Eventf(pi, nil, corev1.EventTypeWarning, "DriftDetected", "DriftDetected",
+			"Pack drift detected on cluster %q: %s", pi.Spec.TargetClusterRef, driftSummary)
 	default:
 		infrav1alpha1.SetCondition(
 			&pi.Status.Conditions,
@@ -254,7 +254,7 @@ func (r *PackInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			msg,
 			pi.Generation,
 		)
-		r.Recorder.Event(pi, corev1.EventTypeWarning, "DependencyBlocked", msg)
+		r.Recorder.Eventf(pi, nil, corev1.EventTypeWarning, "DependencyBlocked", "DependencyBlocked", msg)
 		return ctrl.Result{RequeueAfter: driftCheckInterval}, nil
 	}
 	infrav1alpha1.SetCondition(

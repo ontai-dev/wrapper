@@ -12,7 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	clientevents "k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -52,7 +52,7 @@ const clusterPackFinalizer = "infra.ontai.dev/clusterpack-cleanup"
 type ClusterPackReconciler struct {
 	Client   client.Client
 	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Recorder clientevents.EventRecorder
 }
 
 // Reconcile is the main reconciliation loop for ClusterPack.
@@ -88,7 +88,10 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		if err := r.Client.Update(ctx, cp); err != nil {
 			return ctrl.Result{}, fmt.Errorf("add ClusterPack finalizer: %w", err)
 		}
-		return ctrl.Result{}, nil
+		// Continue in this pass: the finalizer update does not change generation
+		// or annotations, so the resulting watch event is filtered out by the
+		// GenerationChangedPredicate|AnnotationChangedPredicate on SetupWithManager.
+		// Falling through ensures status conditions are set in this reconcile pass.
 	}
 
 	// Step B — Record spec snapshot annotation on first reconcile, BEFORE setting
@@ -149,7 +152,7 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			msg,
 			cp.Generation,
 		)
-		r.Recorder.Event(cp, corev1.EventTypeWarning, "ImmutabilityViolation", msg)
+		r.Recorder.Eventf(cp, nil, corev1.EventTypeWarning, "ImmutabilityViolation", "ImmutabilityViolation", msg)
 		logger.Error(fmt.Errorf("immutability violation"), msg,
 			"name", cp.Name, "namespace", cp.Namespace)
 		return ctrl.Result{}, nil
@@ -185,7 +188,7 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			"Pack is signed and available for deployment.",
 			cp.Generation,
 		)
-		r.Recorder.Event(cp, corev1.EventTypeNormal, "PackSigned", "ClusterPack signed and now available.")
+		r.Recorder.Eventf(cp, nil, corev1.EventTypeNormal, "PackSigned", "PackSigned", "ClusterPack signed and now available.")
 		logger.Info("ClusterPack transitioned to Available",
 			"name", cp.Name, "namespace", cp.Namespace)
 		// Fall through to Step I — provision RunnerConfigs in the same reconcile pass.
@@ -276,8 +279,8 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 		logger.Info("PackExecution created for pack delivery",
 			"pack", cp.Name, "version", cp.Spec.Version, "cluster", clusterName, "packExecution", peName)
-		r.Recorder.Event(cp, corev1.EventTypeNormal, "PackExecutionCreated",
-			fmt.Sprintf("PackExecution %s created in %s for pack delivery to cluster %s.", peName, tenantNS, clusterName))
+		r.Recorder.Eventf(cp, nil, corev1.EventTypeNormal, "PackExecutionCreated", "PackExecutionCreated",
+			"PackExecution %s created in %s for pack delivery to cluster %s.", peName, tenantNS, clusterName)
 	}
 
 	return ctrl.Result{}, nil
