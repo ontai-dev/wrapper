@@ -124,6 +124,11 @@ func TestClusterPack_ObservedGenerationAdvances(t *testing.T) {
 //
 // Scenario 2 — Test Session F. wrapper-schema.md §3.
 func TestPackInstance_OwnerRefCascade_DeletedWhenPackExecutionDeleted(t *testing.T) {
+	// envtest starts API server and etcd only; kube-controller-manager (which
+	// runs the GC controller) is not started. OwnerReference cascade deletion
+	// requires a real cluster.
+	t.Skip("requires real cluster kube-controller-manager GC controller and WRAPPER-BL-ENVTEST-GC closed")
+
 	ctx := context.Background()
 	ns := "seam-system"
 
