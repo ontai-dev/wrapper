@@ -41,7 +41,7 @@ jobs:
         working-directory: wrapper
         run: |
           go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-          golangci-lint run ./...
+          golangci-lint run --timeout 5m ./...
 
       - name: Unit tests
         working-directory: wrapper
