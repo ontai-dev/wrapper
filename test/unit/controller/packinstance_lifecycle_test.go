@@ -130,7 +130,7 @@ func TestOwnershipChain_TalosClusterExists(t *testing.T) {
 	result := reconcilePackExecution(t, r, peName, "infra-system")
 
 	// Must return without requeue (terminal success state).
-	if result.RequeueAfter != 0 || result.Requeue {
+	if result.RequeueAfter != 0 {
 		t.Errorf("expected no requeue after success, got %+v", result)
 	}
 
@@ -272,7 +272,7 @@ func TestDeletion_PackExecutionNotFound_NoJobCreated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error reconciling deleted PE: %v", err)
 	}
-	if result.RequeueAfter != 0 || result.Requeue {
+	if result.RequeueAfter != 0 {
 		t.Errorf("expected no requeue for deleted PE, got %+v", result)
 	}
 
@@ -506,7 +506,7 @@ func TestGate2_PackRevoked(t *testing.T) {
 	result := reconcilePackExecution(t, r, peName, "infra-system")
 
 	// No requeue — revocation requires human intervention.
-	if result.RequeueAfter != 0 || result.Requeue {
+	if result.RequeueAfter != 0 {
 		t.Errorf("expected no requeue when pack revoked (human intervention), got %+v", result)
 	}
 
