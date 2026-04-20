@@ -186,7 +186,7 @@ func (r *PackInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			"SecurityViolation: signature verification failed.",
 			pi.Generation,
 		)
-		r.Recorder.Eventf(pi, nil, corev1.EventTypeWarning, "SecurityViolation", "", msg)
+		r.Recorder.Eventf(pi, nil, corev1.EventTypeWarning, "SecurityViolation", "SecurityViolation", msg)
 		logger.Error(fmt.Errorf("security violation"), msg,
 			"name", pi.Name, "namespace", pi.Namespace)
 		// Requeue to poll for resolution. Human intervention is required but
@@ -218,7 +218,7 @@ func (r *PackInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			fmt.Sprintf("Conductor drift detection reports drift: %s", driftSummary),
 			pi.Generation,
 		)
-		r.Recorder.Eventf(pi, nil, corev1.EventTypeWarning, "DriftDetected", "",
+		r.Recorder.Eventf(pi, nil, corev1.EventTypeWarning, "DriftDetected", "DriftDetected",
 			"Pack drift detected on cluster %q: %s", pi.Spec.TargetClusterRef, driftSummary)
 	default:
 		infrav1alpha1.SetCondition(
@@ -254,7 +254,7 @@ func (r *PackInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			msg,
 			pi.Generation,
 		)
-		r.Recorder.Eventf(pi, nil, corev1.EventTypeWarning, "DependencyBlocked", "", msg)
+		r.Recorder.Eventf(pi, nil, corev1.EventTypeWarning, "DependencyBlocked", "DependencyBlocked", msg)
 		return ctrl.Result{RequeueAfter: driftCheckInterval}, nil
 	}
 	infrav1alpha1.SetCondition(

@@ -236,7 +236,7 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			"name", pe.Name,
 			"peVersion", pe.Spec.ClusterPackRef.Version,
 			"cpVersion", cp.Spec.Version)
-		r.Recorder.Eventf(pe, nil, corev1.EventTypeWarning, "StalePackExecutionDeleted", "",
+		r.Recorder.Eventf(pe, nil, corev1.EventTypeWarning, "StalePackExecutionDeleted", "StalePackExecutionDeleted",
 			"PackExecution %q references ClusterPack version %q but current is %q -- deleting stale object.",
 			pe.Name, pe.Spec.ClusterPackRef.Version, cp.Spec.Version)
 		if err := r.Client.Delete(ctx, pe); err != nil && !apierrors.IsNotFound(err) {
@@ -288,7 +288,7 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			msg,
 			pe.Generation,
 		)
-		r.Recorder.Eventf(pe, nil, corev1.EventTypeWarning, "PackRevoked", "", msg)
+		r.Recorder.Eventf(pe, nil, corev1.EventTypeWarning, "PackRevoked", "PackRevoked", msg)
 		logger.Error(fmt.Errorf("pack revoked"), msg, "name", pe.Name, "clusterPack", cp.Name)
 		return ctrl.Result{}, nil // no requeue — human intervention required
 	}
@@ -419,7 +419,7 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				"pack-deploy Job completed and OperationResult written.",
 				pe.Generation,
 			)
-			r.Recorder.Eventf(pe, nil, corev1.EventTypeNormal, "Succeeded", "", "pack-deploy Job completed successfully.")
+			r.Recorder.Eventf(pe, nil, corev1.EventTypeNormal, "Succeeded", "Succeeded", "pack-deploy Job completed successfully.")
 			logger.Info("PackExecution succeeded",
 				"name", pe.Name, "jobName", jobName, "resultCM", resultCMName)
 
@@ -507,7 +507,7 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				msg,
 				pe.Generation,
 			)
-			r.Recorder.Eventf(pe, nil, corev1.EventTypeWarning, "JobFailed", "", msg)
+			r.Recorder.Eventf(pe, nil, corev1.EventTypeWarning, "JobFailed", "JobFailed", msg)
 			logger.Error(fmt.Errorf("job failed"), msg, "name", pe.Name, "jobName", jobName)
 			return ctrl.Result{}, nil
 		}
@@ -539,7 +539,7 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		fmt.Sprintf("pack-deploy Job %q submitted to Kueue.", jobName),
 		pe.Generation,
 	)
-	r.Recorder.Eventf(pe, nil, corev1.EventTypeNormal, "JobSubmitted", "",
+	r.Recorder.Eventf(pe, nil, corev1.EventTypeNormal, "JobSubmitted", "JobSubmitted",
 		"pack-deploy Job %q submitted.", jobName)
 	logger.Info("PackExecution pack-deploy Job submitted",
 		"name", pe.Name, "jobName", jobName)

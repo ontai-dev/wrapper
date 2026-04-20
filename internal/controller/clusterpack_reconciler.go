@@ -149,7 +149,7 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			msg,
 			cp.Generation,
 		)
-		r.Recorder.Eventf(cp, nil, corev1.EventTypeWarning, "ImmutabilityViolation", "", msg)
+		r.Recorder.Eventf(cp, nil, corev1.EventTypeWarning, "ImmutabilityViolation", "ImmutabilityViolation", msg)
 		logger.Error(fmt.Errorf("immutability violation"), msg,
 			"name", cp.Name, "namespace", cp.Namespace)
 		return ctrl.Result{}, nil
@@ -185,7 +185,7 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			"Pack is signed and available for deployment.",
 			cp.Generation,
 		)
-		r.Recorder.Eventf(cp, nil, corev1.EventTypeNormal, "PackSigned", "", "ClusterPack signed and now available.")
+		r.Recorder.Eventf(cp, nil, corev1.EventTypeNormal, "PackSigned", "PackSigned", "ClusterPack signed and now available.")
 		logger.Info("ClusterPack transitioned to Available",
 			"name", cp.Name, "namespace", cp.Namespace)
 		// Fall through to Step I — provision RunnerConfigs in the same reconcile pass.
@@ -276,7 +276,7 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 		logger.Info("PackExecution created for pack delivery",
 			"pack", cp.Name, "version", cp.Spec.Version, "cluster", clusterName, "packExecution", peName)
-		r.Recorder.Eventf(cp, nil, corev1.EventTypeNormal, "PackExecutionCreated", "",
+		r.Recorder.Eventf(cp, nil, corev1.EventTypeNormal, "PackExecutionCreated", "PackExecutionCreated",
 			"PackExecution %s created in %s for pack delivery to cluster %s.", peName, tenantNS, clusterName)
 	}
 
