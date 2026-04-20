@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "session/*"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build
+        run: make build
+
+      - name: Lint
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          golangci-lint run ./...
+
+      - name: Unit tests
+        run: make test-unit
+
+      - name: Install envtest binaries
+        run: |
+          go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+          ENVTEST_BIN=$(setup-envtest use --bin-dir /tmp/envtest-bins --print path 1.35.0)
+          echo "KUBEBUILDER_ASSETS=${ENVTEST_BIN}" >> "$GITHUB_ENV"
+
+      - name: Integration tests
+        run: make test-integration
+
+      - name: e2e tests
+        run: |
+          E2E_OUT=$(go test ./test/e2e/... -v 2>&1 || true)
+          SKIPPED=$(echo "$E2E_OUT" | grep -c '\[SKIPPED\]\|S\[' || echo 0)
+          echo "### e2e summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "Skipped specs (MGMT_KUBECONFIG not set): ${SKIPPED}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload test output on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output
+          path: /tmp/test-*.log
+          if-no-files-found: ignore

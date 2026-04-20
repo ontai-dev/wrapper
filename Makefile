@@ -1,4 +1,4 @@
-.PHONY: build test e2e lint lint-docs lint-images install-hooks generate generate-deepcopy generate-crd clean docker-build docker-push
+.PHONY: build test test-unit test-integration test-all e2e lint lint-docs lint-images install-hooks generate generate-deepcopy generate-crd clean docker-build docker-push
 
 CONTROLLER_GEN   ?= $(shell which controller-gen 2>/dev/null || echo $(HOME)/go/bin/controller-gen)
 IMAGE_REGISTRY   ?= 10.20.0.1:5000/ontai-dev
@@ -10,6 +10,14 @@ build:
 
 test:
 	go test ./test/unit/...
+
+test-unit:
+	go test ./test/unit/...
+
+test-integration:
+	KUBEBUILDER_ASSETS=$(KUBEBUILDER_ASSETS) go test ./test/integration/...
+
+test-all: test-unit test-integration
 
 e2e:
 	MGMT_KUBECONFIG=$(MGMT_KUBECONFIG) TENANT_KUBECONFIG=$(TENANT_KUBECONFIG) \
