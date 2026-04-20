@@ -88,7 +88,10 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		if err := r.Client.Update(ctx, cp); err != nil {
 			return ctrl.Result{}, fmt.Errorf("add ClusterPack finalizer: %w", err)
 		}
-		return ctrl.Result{}, nil
+		// Continue in this pass: the finalizer update does not change generation
+		// or annotations, so the resulting watch event is filtered out by the
+		// GenerationChangedPredicate|AnnotationChangedPredicate on SetupWithManager.
+		// Falling through ensures status conditions are set in this reconcile pass.
 	}
 
 	// Step B — Record spec snapshot annotation on first reconcile, BEFORE setting

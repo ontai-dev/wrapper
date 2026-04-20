@@ -134,7 +134,7 @@ func TestPackInstance_OwnerRefCascade_DeletedWhenPackExecutionDeleted(t *testing
 			Namespace: ns,
 		},
 		Spec: infrav1alpha1.PackExecutionSpec{
-			ClusterPackRef:      infrav1alpha1.ClusterPackRef{Name: "some-pack"},
+			ClusterPackRef:      infrav1alpha1.ClusterPackRef{Name: "some-pack", Version: "v1.0.0"},
 			TargetClusterRef:    "ccs-test",
 			AdmissionProfileRef: "some-profile",
 		},
