@@ -10,7 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/tools/record"
+	clientevents "k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -84,7 +84,7 @@ func TestPackInstanceReconciler_NoReceipt(t *testing.T) {
 	r := &controller.PackInstanceReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: clientevents.NewFakeRecorder(10),
 	}
 
 	result := reconcilePI(t, r, pi)
@@ -120,7 +120,7 @@ func TestPackInstanceReconciler_SecurityViolation(t *testing.T) {
 	r := &controller.PackInstanceReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: clientevents.NewFakeRecorder(10),
 	}
 
 	reconcilePI(t, r, pi)
@@ -159,7 +159,7 @@ func TestPackInstanceReconciler_DriftDetected(t *testing.T) {
 	r := &controller.PackInstanceReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: clientevents.NewFakeRecorder(10),
 	}
 
 	reconcilePI(t, r, pi)
@@ -195,7 +195,7 @@ func TestPackInstanceReconciler_InSync(t *testing.T) {
 	r := &controller.PackInstanceReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: clientevents.NewFakeRecorder(10),
 	}
 
 	reconcilePI(t, r, pi)
@@ -249,7 +249,7 @@ func TestPackInstanceReconciler_DependencyBlock(t *testing.T) {
 	r := &controller.PackInstanceReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: clientevents.NewFakeRecorder(10),
 	}
 
 	reconcilePI(t, r, pi)
@@ -321,7 +321,7 @@ func TestPackInstanceReconciler_ReadyWhenPackExecutionSucceeded(t *testing.T) {
 	r := &controller.PackInstanceReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: clientevents.NewFakeRecorder(10),
 	}
 
 	result := reconcilePI(t, r, pi)
@@ -363,7 +363,7 @@ func TestPackInstanceReconciler_AwaitingDeliveryWhenNoPackExecution(t *testing.T
 	r := &controller.PackInstanceReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: clientevents.NewFakeRecorder(10),
 	}
 
 	reconcilePI(t, r, pi)
@@ -390,7 +390,7 @@ func TestPackInstanceReconciler_LineageSyncedInitialized(t *testing.T) {
 	r := &controller.PackInstanceReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: clientevents.NewFakeRecorder(10),
 	}
 
 	reconcilePI(t, r, pi)

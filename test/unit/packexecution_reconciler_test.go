@@ -11,7 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/tools/record"
+	clientevents "k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -196,7 +196,7 @@ func TestPackExecutionReconciler_Gate1_SignaturePending(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: clientevents.NewFakeRecorder(10),
 	}
 
 	result := reconcilePE(t, r, pe)
@@ -247,12 +247,12 @@ func TestPackExecutionReconciler_Gate2_PackRevoked(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: clientevents.NewFakeRecorder(10),
 	}
 
 	result := reconcilePE(t, r, pe)
 
-	if result.Requeue || result.RequeueAfter != 0 {
+	if result.RequeueAfter != 0 {
 		t.Errorf("expected no requeue for revoked pack, got %+v", result)
 	}
 
@@ -296,7 +296,7 @@ func TestPackExecutionReconciler_Gate3_SnapshotOutOfSync(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: clientevents.NewFakeRecorder(10),
 	}
 
 	result := reconcilePE(t, r, pe)
@@ -344,7 +344,7 @@ func TestPackExecutionReconciler_Gate4_RBACProfileNotProvisioned(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: clientevents.NewFakeRecorder(10),
 	}
 
 	result := reconcilePE(t, r, pe)
@@ -393,7 +393,7 @@ func TestPackExecutionReconciler_AllGatesClear_JobSubmitted(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: clientevents.NewFakeRecorder(10),
 	}
 
 	result := reconcilePE(t, r, pe)
@@ -452,7 +452,7 @@ func TestPackExecutionReconciler_LineageSyncedInitialized(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: clientevents.NewFakeRecorder(10),
 	}
 
 	reconcilePE(t, r, pe)
@@ -488,7 +488,7 @@ func TestPackExecutionReconciler_Gate0_ConductorReadyAbsent(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: clientevents.NewFakeRecorder(10),
 	}
 
 	result := reconcilePE(t, r, pe)
@@ -533,7 +533,7 @@ func TestPackExecutionReconciler_Gate0_ConductorReadyFalse(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: clientevents.NewFakeRecorder(10),
 	}
 
 	result := reconcilePE(t, r, pe)
@@ -578,7 +578,7 @@ func TestPackExecutionReconciler_Gate0_ConductorReadyTrue_ProceedsToSignatureGat
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(10),
+		Recorder: clientevents.NewFakeRecorder(10),
 	}
 
 	result := reconcilePE(t, r, pe)

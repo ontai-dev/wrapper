@@ -25,7 +25,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	clientevents "k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	infrav1alpha1 "github.com/ontai-dev/wrapper/api/v1alpha1"
@@ -49,7 +49,7 @@ func TestJobSubmission_KueueQueueLabel(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   buildTestScheme(t),
-		Recorder: record.NewFakeRecorder(32),
+		Recorder: clientevents.NewFakeRecorder(32),
 	}
 
 	reconcilePackExecution(t, r, pe.Name, pe.Namespace)
@@ -95,7 +95,7 @@ func TestJobSubmission_PackArtifactRefEnvVars(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   buildTestScheme(t),
-		Recorder: record.NewFakeRecorder(32),
+		Recorder: clientevents.NewFakeRecorder(32),
 	}
 
 	reconcilePackExecution(t, r, pe.Name, pe.Namespace)
@@ -157,7 +157,7 @@ func TestJobSubmission_CredentialsVolumeMount(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   buildTestScheme(t),
-		Recorder: record.NewFakeRecorder(32),
+		Recorder: clientevents.NewFakeRecorder(32),
 	}
 
 	reconcilePackExecution(t, r, pe.Name, pe.Namespace)
@@ -220,7 +220,7 @@ func TestJobSubmission_NoDAGFields(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   buildTestScheme(t),
-		Recorder: record.NewFakeRecorder(32),
+		Recorder: clientevents.NewFakeRecorder(32),
 	}
 
 	reconcilePackExecution(t, r, pe.Name, pe.Namespace)
@@ -277,13 +277,13 @@ func TestJobFailed_PackExecutionFailed(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   buildTestScheme(t),
-		Recorder: record.NewFakeRecorder(32),
+		Recorder: clientevents.NewFakeRecorder(32),
 	}
 
 	result := reconcilePackExecution(t, r, peName, "infra-system")
 
 	// No requeue — failed state requires human investigation and intervention.
-	if result.RequeueAfter != 0 || result.Requeue {
+	if result.RequeueAfter != 0 {
 		t.Errorf("expected no requeue after Job failure (human intervention required), got %+v", result)
 	}
 
@@ -347,13 +347,13 @@ func TestJobSucceeded_PackExecutionSucceeded(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   buildTestScheme(t),
-		Recorder: record.NewFakeRecorder(32),
+		Recorder: clientevents.NewFakeRecorder(32),
 	}
 
 	result := reconcilePackExecution(t, r, peName, "infra-system")
 
 	// Terminal success — no requeue.
-	if result.RequeueAfter != 0 || result.Requeue {
+	if result.RequeueAfter != 0 {
 		t.Errorf("expected no requeue after success, got %+v", result)
 	}
 
@@ -415,7 +415,7 @@ func TestIdempotency_RunningJob_NoNewJob(t *testing.T) {
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
 		Scheme:   buildTestScheme(t),
-		Recorder: record.NewFakeRecorder(32),
+		Recorder: clientevents.NewFakeRecorder(32),
 	}
 
 	// First reconcile with running Job — should set Running=True, requeue 10s.

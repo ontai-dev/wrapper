@@ -83,14 +83,14 @@ func TestMain(m *testing.M) {
 	if err := (&controller.ClusterPackReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("clusterpack-controller"),
+		Recorder: mgr.GetEventRecorder("clusterpack-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		panic("failed to register ClusterPackReconciler: " + err.Error())
 	}
 	if err := (&controller.PackInstanceReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("packinstance-controller"),
+		Recorder: mgr.GetEventRecorder("packinstance-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		panic("failed to register PackInstanceReconciler: " + err.Error())
 	}

@@ -14,7 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	clientevents "k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -96,7 +96,7 @@ const (
 type PackExecutionReconciler struct {
 	Client   client.Client
 	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Recorder clientevents.EventRecorder
 }
 
 // Reconcile is the main reconciliation loop for PackExecution.
@@ -236,9 +236,9 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			"name", pe.Name,
 			"peVersion", pe.Spec.ClusterPackRef.Version,
 			"cpVersion", cp.Spec.Version)
-		r.Recorder.Event(pe, corev1.EventTypeWarning, "StalePackExecutionDeleted",
-			fmt.Sprintf("PackExecution %q references ClusterPack version %q but current is %q — deleting stale object.",
-				pe.Name, pe.Spec.ClusterPackRef.Version, cp.Spec.Version))
+		r.Recorder.Eventf(pe, nil, corev1.EventTypeWarning, "StalePackExecutionDeleted", "",
+			"PackExecution %q references ClusterPack version %q but current is %q -- deleting stale object.",
+			pe.Name, pe.Spec.ClusterPackRef.Version, cp.Spec.Version)
 		if err := r.Client.Delete(ctx, pe); err != nil && !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, fmt.Errorf("delete stale PackExecution %s: %w", pe.Name, err)
 		}
@@ -288,7 +288,7 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			msg,
 			pe.Generation,
 		)
-		r.Recorder.Event(pe, corev1.EventTypeWarning, "PackRevoked", msg)
+		r.Recorder.Eventf(pe, nil, corev1.EventTypeWarning, "PackRevoked", "", msg)
 		logger.Error(fmt.Errorf("pack revoked"), msg, "name", pe.Name, "clusterPack", cp.Name)
 		return ctrl.Result{}, nil // no requeue — human intervention required
 	}
@@ -419,7 +419,7 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				"pack-deploy Job completed and OperationResult written.",
 				pe.Generation,
 			)
-			r.Recorder.Event(pe, corev1.EventTypeNormal, "Succeeded", "pack-deploy Job completed successfully.")
+			r.Recorder.Eventf(pe, nil, corev1.EventTypeNormal, "Succeeded", "", "pack-deploy Job completed successfully.")
 			logger.Info("PackExecution succeeded",
 				"name", pe.Name, "jobName", jobName, "resultCM", resultCMName)
 
@@ -507,7 +507,7 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				msg,
 				pe.Generation,
 			)
-			r.Recorder.Event(pe, corev1.EventTypeWarning, "JobFailed", msg)
+			r.Recorder.Eventf(pe, nil, corev1.EventTypeWarning, "JobFailed", "", msg)
 			logger.Error(fmt.Errorf("job failed"), msg, "name", pe.Name, "jobName", jobName)
 			return ctrl.Result{}, nil
 		}
@@ -539,8 +539,8 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		fmt.Sprintf("pack-deploy Job %q submitted to Kueue.", jobName),
 		pe.Generation,
 	)
-	r.Recorder.Event(pe, corev1.EventTypeNormal, "JobSubmitted",
-		fmt.Sprintf("pack-deploy Job %q submitted.", jobName))
+	r.Recorder.Eventf(pe, nil, corev1.EventTypeNormal, "JobSubmitted", "",
+		"pack-deploy Job %q submitted.", jobName)
 	logger.Info("PackExecution pack-deploy Job submitted",
 		"name", pe.Name, "jobName", jobName)
 	return ctrl.Result{RequeueAfter: 10 * time.Second}, nil

@@ -76,7 +76,7 @@ func main() {
 	if err := (&controller.ClusterPackReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("clusterpack-controller"),
+		Recorder: mgr.GetEventRecorder("clusterpack-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ClusterPack")
 		os.Exit(1)
@@ -85,7 +85,7 @@ func main() {
 	if err := (&controller.PackExecutionReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("packexecution-controller"),
+		Recorder: mgr.GetEventRecorder("packexecution-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PackExecution")
 		os.Exit(1)
@@ -94,7 +94,7 @@ func main() {
 	if err := (&controller.PackInstanceReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("packinstance-controller"),
+		Recorder: mgr.GetEventRecorder("packinstance-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PackInstance")
 		os.Exit(1)
