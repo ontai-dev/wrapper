@@ -483,7 +483,7 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			}
 			// Wire descendant lineage so the DescendantReconciler can append this
 			// PackInstance to the PackExecution's ILI. seam-core-schema.md §3.
-			lineage.SetDescendantLabels(pi, lineage.IndexName("PackExecution", pe.Name), "wrapper", lineage.PackExecution)
+			lineage.SetDescendantLabels(pi, lineage.IndexName("PackExecution", pe.Name), pe.Namespace, "wrapper", lineage.PackExecution)
 			if err := r.Client.Create(ctx, pi); err != nil && !apierrors.IsAlreadyExists(err) {
 				return ctrl.Result{}, fmt.Errorf("failed to create PackInstance %s: %w", piName, err)
 			}
