@@ -551,10 +551,24 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			// Wire descendant lineage so the DescendantReconciler can append this
 			// PackInstance to the PackExecution's ILI. seam-core-schema.md §3.
 			lineage.SetDescendantLabels(pi, lineage.IndexName("PackExecution", pe.Name), pe.Namespace, "wrapper", lineage.PackExecution, pe.GetAnnotations()[lineage.AnnotationDeclaringPrincipal])
-			if err := r.Client.Create(ctx, pi); err != nil && !apierrors.IsAlreadyExists(err) {
-				return ctrl.Result{}, fmt.Errorf("failed to create PackInstance %s: %w", piName, err)
+			if err := r.Client.Create(ctx, pi); err != nil {
+				if !apierrors.IsAlreadyExists(err) {
+					return ctrl.Result{}, fmt.Errorf("failed to create PackInstance %s: %w", piName, err)
+				}
+				// PackInstance already exists (basePackName supersession path).
+				// Update spec to reflect the new ClusterPack version.
+				existing := &infrav1alpha1.PackInstance{}
+				if getErr := r.Client.Get(ctx, client.ObjectKey{Name: piName, Namespace: piNamespace}, existing); getErr != nil {
+					return ctrl.Result{}, fmt.Errorf("get existing PackInstance %s: %w", piName, getErr)
+				}
+				specPatch := client.MergeFrom(existing.DeepCopy())
+				existing.Spec.ClusterPackRef = pe.Spec.ClusterPackRef.Name
+				existing.Spec.Version = cp.Spec.Version
+				if patchErr := r.Client.Patch(ctx, existing, specPatch); patchErr != nil {
+					return ctrl.Result{}, fmt.Errorf("patch PackInstance spec %s: %w", piName, patchErr)
+				}
 			}
-			logger.Info("PackInstance created or already exists",
+			logger.Info("PackInstance created or updated",
 				"name", piName, "namespace", piNamespace)
 
 			// Write DeployedResources to PackInstance status so the deletion handler
@@ -565,14 +579,19 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				piKey := client.ObjectKey{Name: piName, Namespace: piNamespace}
 				if getErr := r.Client.Get(ctx, piKey, piStatus); getErr == nil {
 					piPatch := client.MergeFrom(piStatus.DeepCopy())
+					// Replace DeployedResources (not append) to reflect the current deployment.
+					// On version supersession the previous resource list is replaced with
+					// the new one so the deletion handler cleans up the correct resources.
+					newRefs := make([]infrav1alpha1.DeployedResourceRef, 0, len(opResult.DeployedResources))
 					for _, dr := range opResult.DeployedResources {
-						piStatus.Status.DeployedResources = append(piStatus.Status.DeployedResources, infrav1alpha1.DeployedResourceRef{
+						newRefs = append(newRefs, infrav1alpha1.DeployedResourceRef{
 							APIVersion: dr.APIVersion,
 							Kind:       dr.Kind,
 							Namespace:  dr.Namespace,
 							Name:       dr.Name,
 						})
 					}
+					piStatus.Status.DeployedResources = newRefs
 					if patchErr := r.Client.Status().Patch(ctx, piStatus, piPatch); patchErr != nil {
 						logger.Error(patchErr, "failed to patch PackInstance DeployedResources", "name", piName)
 					}
