@@ -405,12 +405,19 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			// Parse the OperationResult status from the ConfigMap. If the conductor
 			// reported a failure (Status="Failed"), set PackExecution to Failed rather
 			// than Succeeded, so operators and humans can observe the true outcome.
+			type deployedResourceEntry struct {
+				APIVersion string `json:"apiVersion"`
+				Kind       string `json:"kind"`
+				Namespace  string `json:"namespace,omitempty"`
+				Name       string `json:"name"`
+			}
 			type operationResultStatus struct {
 				Status        string `json:"Status"`
 				FailureReason *struct {
 					Reason     string `json:"Reason"`
 					FailedStep string `json:"FailedStep"`
 				} `json:"FailureReason"`
+				DeployedResources []deployedResourceEntry `json:"DeployedResources,omitempty"`
 			}
 			var opResult operationResultStatus
 			if raw, ok := resultCM.Data["result"]; ok {
@@ -508,8 +515,15 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			// delivered pack state. Namespace is explicit per wrapper-schema.md §9.
 			// Labels infra.ontai.dev/pack and platform.ontai.dev/cluster enable
 			// conductor and tooling to filter PackInstances by pack or cluster.
-			// One PackInstance per (ClusterPack, TargetCluster). Idempotent.
-			piName := pe.Spec.ClusterPackRef.Name + "-" + pe.Spec.TargetClusterRef
+			// One PackInstance per logical (basePack, TargetCluster). Idempotent.
+			// When ClusterPack.spec.basePackName is set, the PackInstance is named
+			// {basePackName}-{clusterName} so a newer version supersedes the older
+			// one in-place rather than creating a parallel PackInstance. Decision 11.
+			piBaseName := cp.Spec.BasePackName
+			if piBaseName == "" {
+				piBaseName = pe.Spec.ClusterPackRef.Name
+			}
+			piName := piBaseName + "-" + pe.Spec.TargetClusterRef
 			piNamespace := "seam-tenant-" + pe.Spec.TargetClusterRef
 			pi := &infrav1alpha1.PackInstance{
 				ObjectMeta: metav1.ObjectMeta{
@@ -542,6 +556,28 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			}
 			logger.Info("PackInstance created or already exists",
 				"name", piName, "namespace", piNamespace)
+
+			// Write DeployedResources to PackInstance status so the deletion handler
+			// can clean up workload resources without re-pulling the OCI artifact.
+			// INV-006: no Jobs on the delete path. wrapper-schema.md §3, Decision 11.
+			if len(opResult.DeployedResources) > 0 {
+				piStatus := &infrav1alpha1.PackInstance{}
+				piKey := client.ObjectKey{Name: piName, Namespace: piNamespace}
+				if getErr := r.Client.Get(ctx, piKey, piStatus); getErr == nil {
+					piPatch := client.MergeFrom(piStatus.DeepCopy())
+					for _, dr := range opResult.DeployedResources {
+						piStatus.Status.DeployedResources = append(piStatus.Status.DeployedResources, infrav1alpha1.DeployedResourceRef{
+							APIVersion: dr.APIVersion,
+							Kind:       dr.Kind,
+							Namespace:  dr.Namespace,
+							Name:       dr.Name,
+						})
+					}
+					if patchErr := r.Client.Status().Patch(ctx, piStatus, piPatch); patchErr != nil {
+						logger.Error(patchErr, "failed to patch PackInstance DeployedResources", "name", piName)
+					}
+				}
+			}
 
 			return ctrl.Result{}, nil
 		}

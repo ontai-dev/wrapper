@@ -111,6 +111,24 @@ type PackInstanceSpec struct {
 	Lineage *lineage.SealedCausalChain `json:"lineage,omitempty"`
 }
 
+// DeployedResourceRef records a single Kubernetes resource applied by the pack-deploy
+// job. Used by the PackInstance deletion handler to clean up deployed workload when
+// the ClusterPack is deleted. wrapper-schema.md §3, Decision 11.
+type DeployedResourceRef struct {
+	// APIVersion is the Kubernetes apiVersion (e.g., apps/v1, v1).
+	APIVersion string `json:"apiVersion"`
+
+	// Kind is the Kubernetes resource Kind (e.g., Deployment, Namespace).
+	Kind string `json:"kind"`
+
+	// Namespace is the resource namespace. Empty for cluster-scoped resources.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+
+	// Name is the resource name.
+	Name string `json:"name"`
+}
+
 // PackInstanceStatus defines the observed state of a PackInstance.
 type PackInstanceStatus struct {
 	// ObservedGeneration is the generation most recently reconciled.
@@ -126,6 +144,13 @@ type PackInstanceStatus struct {
 	// state as reported by the conductor drift detection loop via PackReceipt.
 	// +optional
 	DriftSummary string `json:"driftSummary,omitempty"`
+
+	// DeployedResources is the list of Kubernetes resources applied by the
+	// pack-deploy job. Written by PackExecutionReconciler on successful deployment.
+	// Used by the PackInstance deletion handler to clean up workload resources
+	// when the ClusterPack is deleted. wrapper-schema.md §3, Decision 11.
+	// +optional
+	DeployedResources []DeployedResourceRef `json:"deployedResources,omitempty"`
 
 	// Conditions is the list of status conditions for this PackInstance.
 	// +optional

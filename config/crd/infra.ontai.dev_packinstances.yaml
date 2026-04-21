@@ -250,6 +250,39 @@ spec:
                   (PackReceipt observed in a Ready state).
                 format: date-time
                 type: string
+              deployedResources:
+                description: |-
+                  DeployedResources is the list of Kubernetes resources applied by the
+                  pack-deploy job. Written by PackExecutionReconciler on successful deployment.
+                  Used by the PackInstance deletion handler to clean up workload resources
+                  when the ClusterPack is deleted. wrapper-schema.md §3, Decision 11.
+                items:
+                  description: |-
+                    DeployedResourceRef records a single Kubernetes resource applied by the pack-deploy
+                    job. Used by the PackInstance deletion handler to clean up deployed workload when
+                    the ClusterPack is deleted. wrapper-schema.md §3, Decision 11.
+                  properties:
+                    apiVersion:
+                      description: APIVersion is the Kubernetes apiVersion (e.g.,
+                        apps/v1, v1).
+                      type: string
+                    kind:
+                      description: Kind is the Kubernetes resource Kind (e.g., Deployment,
+                        Namespace).
+                      type: string
+                    name:
+                      description: Name is the resource name.
+                      type: string
+                    namespace:
+                      description: Namespace is the resource namespace. Empty for
+                        cluster-scoped resources.
+                      type: string
+                  required:
+                  - apiVersion
+                  - kind
+                  - name
+                  type: object
+                type: array
               driftSummary:
                 description: |-
                   DriftSummary is a human-readable one-line summary of the current drift
