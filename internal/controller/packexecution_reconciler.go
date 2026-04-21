@@ -64,10 +64,6 @@ const (
 	// Defaults to the local dev registry if not set.
 	conductorImageDefault = "10.20.0.1:5000/ontai-dev/conductor-execute:dev"
 
-	// kubeconfigSecretName is the name of the kubeconfig Secret mounted by pack-deploy Jobs.
-	// The Secret lives in the Job's own namespace (seam-tenant-{clusterRef}) — Platform
-	// copies it there from seam-system as part of cluster onboarding. WS4.
-	kubeconfigSecretName = "target-cluster-kubeconfig"
 )
 
 // PackExecutionReconciler watches PackExecution CRs and manages the 5-gate check
@@ -738,7 +734,7 @@ func (r *PackExecutionReconciler) buildPackDeployJob(
 							Name: "kubeconfig",
 							VolumeSource: corev1.VolumeSource{
 								Secret: &corev1.SecretVolumeSource{
-									SecretName: kubeconfigSecretName,
+									SecretName: platformKubeconfigSecretName(pe.Spec.TargetClusterRef),
 								},
 							},
 						},
@@ -786,6 +782,14 @@ func (r *PackExecutionReconciler) buildPackDeployJob(
 // packDeployJobName constructs a deterministic Job name from the PackExecution name.
 func packDeployJobName(pe *infrav1alpha1.PackExecution) string {
 	return fmt.Sprintf("pack-deploy-%s", pe.Name)
+}
+
+// platformKubeconfigSecretName returns the name of the kubeconfig Secret created by
+// Platform for the given cluster. Platform writes seam-mc-{clusterRef}-kubeconfig
+// to seam-tenant-{clusterRef} for all cluster roles. Wrapper Jobs mount this Secret
+// directly rather than maintaining a separate copy. platform-schema.md §5.
+func platformKubeconfigSecretName(clusterRef string) string {
+	return "seam-mc-" + clusterRef + "-kubeconfig"
 }
 
 func boolPtr(b bool) *bool { return &b }

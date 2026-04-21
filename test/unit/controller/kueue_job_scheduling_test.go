@@ -178,8 +178,8 @@ func TestJobSubmission_CredentialsVolumeMount(t *testing.T) {
 			found = true
 			if v.Secret == nil {
 				t.Error("kubeconfig volume has no Secret source")
-			} else if v.Secret.SecretName != "target-cluster-kubeconfig" {
-				t.Errorf("kubeconfig Secret name=%q, want target-cluster-kubeconfig", v.Secret.SecretName)
+			} else if v.Secret.SecretName != "seam-mc-cluster-g-kubeconfig" {
+				t.Errorf("kubeconfig Secret name=%q, want seam-mc-cluster-g-kubeconfig", v.Secret.SecretName)
 			}
 			break
 		}
