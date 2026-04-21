@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -400,25 +401,74 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				return ctrl.Result{}, fmt.Errorf("failed to get OperationResult ConfigMap: %w", err)
 			}
 			pe.Status.OperationResultRef = resultCMName
-			infrav1alpha1.SetCondition(
-				&pe.Status.Conditions,
-				infrav1alpha1.ConditionTypePackExecutionRunning,
-				metav1.ConditionFalse,
-				infrav1alpha1.ReasonJobSucceeded,
-				"pack-deploy Job completed successfully.",
-				pe.Generation,
-			)
-			infrav1alpha1.SetCondition(
-				&pe.Status.Conditions,
-				infrav1alpha1.ConditionTypePackExecutionSucceeded,
-				metav1.ConditionTrue,
-				infrav1alpha1.ReasonJobSucceeded,
-				"pack-deploy Job completed and OperationResult written.",
-				pe.Generation,
-			)
-			r.Recorder.Eventf(pe, nil, corev1.EventTypeNormal, "Succeeded", "Succeeded", "pack-deploy Job completed successfully.")
-			logger.Info("PackExecution succeeded",
-				"name", pe.Name, "jobName", jobName, "resultCM", resultCMName)
+
+			// Parse the OperationResult status from the ConfigMap. If the conductor
+			// reported a failure (Status="Failed"), set PackExecution to Failed rather
+			// than Succeeded, so operators and humans can observe the true outcome.
+			type operationResultStatus struct {
+				Status        string `json:"Status"`
+				FailureReason *struct {
+					Reason     string `json:"Reason"`
+					FailedStep string `json:"FailedStep"`
+				} `json:"FailureReason"`
+			}
+			var opResult operationResultStatus
+			if raw, ok := resultCM.Data["result"]; ok {
+				_ = json.Unmarshal([]byte(raw), &opResult)
+			}
+
+			if opResult.Status == "Failed" {
+				failMsg := "pack-deploy capability reported failure."
+				if opResult.FailureReason != nil {
+					failMsg = fmt.Sprintf("step %q failed: %s", opResult.FailureReason.FailedStep, opResult.FailureReason.Reason)
+				}
+				infrav1alpha1.SetCondition(
+					&pe.Status.Conditions,
+					infrav1alpha1.ConditionTypePackExecutionRunning,
+					metav1.ConditionFalse,
+					infrav1alpha1.ReasonJobSucceeded,
+					"pack-deploy Job completed.",
+					pe.Generation,
+				)
+				infrav1alpha1.SetCondition(
+					&pe.Status.Conditions,
+					infrav1alpha1.ConditionTypePackExecutionSucceeded,
+					metav1.ConditionFalse,
+					"CapabilityFailed",
+					failMsg,
+					pe.Generation,
+				)
+				r.Recorder.Eventf(pe, nil, corev1.EventTypeWarning, "CapabilityFailed", "CapabilityFailed", failMsg)
+				logger.Info("PackExecution capability failed",
+					"name", pe.Name, "jobName", jobName, "resultCM", resultCMName,
+					"failedStep", func() string {
+						if opResult.FailureReason != nil {
+							return opResult.FailureReason.FailedStep
+						}
+						return ""
+					}(),
+				)
+			} else {
+				infrav1alpha1.SetCondition(
+					&pe.Status.Conditions,
+					infrav1alpha1.ConditionTypePackExecutionRunning,
+					metav1.ConditionFalse,
+					infrav1alpha1.ReasonJobSucceeded,
+					"pack-deploy Job completed successfully.",
+					pe.Generation,
+				)
+				infrav1alpha1.SetCondition(
+					&pe.Status.Conditions,
+					infrav1alpha1.ConditionTypePackExecutionSucceeded,
+					metav1.ConditionTrue,
+					infrav1alpha1.ReasonJobSucceeded,
+					"pack-deploy Job completed and OperationResult written.",
+					pe.Generation,
+				)
+				r.Recorder.Eventf(pe, nil, corev1.EventTypeNormal, "Succeeded", "Succeeded", "pack-deploy Job completed successfully.")
+				logger.Info("PackExecution succeeded",
+					"name", pe.Name, "jobName", jobName, "resultCM", resultCMName)
+			}
 
 			// Fix 3 — Attach Job OwnerReference to OperationResult ConfigMap so it
 			// is garbage-collected when the Job TTL expires. Idempotent: skips if the
@@ -447,7 +497,14 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				}
 			}
 
-			// Step I.b — Create PackInstance in seam-tenant-{clusterRef} to record the
+			// Step I.b — Create PackInstance only on capability success.
+			// A failed capability means the workload was not (fully) delivered;
+			// recording a PackInstance would misrepresent the cluster state.
+			if opResult.Status == "Failed" {
+				return ctrl.Result{}, nil
+			}
+
+			// Create PackInstance in seam-tenant-{clusterRef} to record the
 			// delivered pack state. Namespace is explicit per wrapper-schema.md §9.
 			// Labels infra.ontai.dev/pack and platform.ontai.dev/cluster enable
 			// conductor and tooling to filter PackInstances by pack or cluster.
