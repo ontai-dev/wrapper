@@ -2,8 +2,8 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,8 +24,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	infrav1alpha1 "github.com/ontai-dev/wrapper/api/v1alpha1"
+	seamv1alpha1 "github.com/ontai-dev/seam-core/api/v1alpha1"
 	"github.com/ontai-dev/seam-core/pkg/lineage"
+	infrav1alpha1 "github.com/ontai-dev/wrapper/api/v1alpha1"
 )
 
 const (
@@ -84,7 +85,7 @@ const (
 //     gate 3. PermissionSnapshot gate — target cluster snapshot current
 //     gate 4. RBACProfile gate — admissionProfileRef provisioned=true
 //  8. Check for existing Job; if running, update Running condition and requeue.
-//  9. Read OperationResult ConfigMap; if present, mark Succeeded.
+//  9. Read PackOperationResult CR; if present, mark Succeeded.
 //  10. Submit pack-deploy Job via Kueue.
 //
 // Gate 0 is checked first because ConductorReady is a cluster-level prerequisite,
@@ -389,45 +390,53 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if jobExists {
 		// Check if Job has completed.
 		if existingJob.Status.Succeeded > 0 {
-			// Step I — Read OperationResult ConfigMap.
-			resultCMName := operationResultCMPrefix + pe.Name
-			resultCM := &corev1.ConfigMap{}
-			resultKey := client.ObjectKey{Name: resultCMName, Namespace: pe.Namespace}
-			if err := r.Client.Get(ctx, resultKey, resultCM); err != nil {
+			// Step I — Read PackOperationResult CR written by Conductor Job.
+			resultName := operationResultCMPrefix + pe.Name
+			resultPOR := &seamv1alpha1.PackOperationResult{}
+			resultKey := client.ObjectKey{Name: resultName, Namespace: pe.Namespace}
+			if err := r.Client.Get(ctx, resultKey, resultPOR); err != nil {
 				if apierrors.IsNotFound(err) {
-					// Job succeeded but ConfigMap not yet written — requeue briefly.
+					// Job succeeded but PackOperationResult not yet written — requeue briefly.
 					return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 				}
-				return ctrl.Result{}, fmt.Errorf("failed to get OperationResult ConfigMap: %w", err)
+				return ctrl.Result{}, fmt.Errorf("failed to get PackOperationResult %q: %w", resultName, err)
 			}
-			pe.Status.OperationResultRef = resultCMName
+			pe.Status.OperationResultRef = resultName
 
-			// Parse the OperationResult status from the ConfigMap. If the conductor
-			// reported a failure (Status="Failed"), set PackExecution to Failed rather
-			// than Succeeded, so operators and humans can observe the true outcome.
-			type deployedResourceEntry struct {
-				APIVersion string `json:"apiVersion"`
-				Kind       string `json:"kind"`
-				Namespace  string `json:"namespace,omitempty"`
-				Name       string `json:"name"`
+			// Attach PackExecution OwnerReference so the PackOperationResult is
+			// garbage-collected when the PackExecution is deleted. Idempotent.
+			alreadyOwned := false
+			for _, ref := range resultPOR.OwnerReferences {
+				if ref.UID == pe.UID {
+					alreadyOwned = true
+					break
+				}
 			}
-			type operationResultStatus struct {
-				Status        string `json:"Status"`
-				FailureReason *struct {
-					Reason     string `json:"Reason"`
-					FailedStep string `json:"FailedStep"`
-				} `json:"FailureReason"`
-				DeployedResources []deployedResourceEntry `json:"DeployedResources,omitempty"`
-			}
-			var opResult operationResultStatus
-			if raw, ok := resultCM.Data["result"]; ok {
-				_ = json.Unmarshal([]byte(raw), &opResult)
+			if !alreadyOwned {
+				porPatch := client.MergeFrom(resultPOR.DeepCopy())
+				resultPOR.OwnerReferences = append(resultPOR.OwnerReferences, metav1.OwnerReference{
+					APIVersion:         infrav1alpha1.GroupVersion.String(),
+					Kind:               "PackExecution",
+					Name:               pe.Name,
+					UID:                pe.UID,
+					Controller:         boolPtr(false),
+					BlockOwnerDeletion: boolPtr(true),
+				})
+				if patchErr := r.Client.Patch(ctx, resultPOR, porPatch); patchErr != nil {
+					logger.Error(patchErr, "failed to patch PackOperationResult with PackExecution owner reference",
+						"porName", resultName)
+				}
 			}
 
-			if opResult.Status == "Failed" {
+			// Read result fields directly from typed CR spec. No JSON parsing needed.
+			porStatus := resultPOR.Spec.Status
+			porFailureReason := resultPOR.Spec.FailureReason
+			porDeployedResources := resultPOR.Spec.DeployedResources
+
+			if porStatus == seamv1alpha1.PackResultFailed {
 				failMsg := "pack-deploy capability reported failure."
-				if opResult.FailureReason != nil {
-					failMsg = fmt.Sprintf("step %q failed: %s", opResult.FailureReason.FailedStep, opResult.FailureReason.Reason)
+				if porFailureReason != nil {
+					failMsg = fmt.Sprintf("step %q failed: %s", porFailureReason.FailedStep, porFailureReason.Reason)
 				}
 				infrav1alpha1.SetCondition(
 					&pe.Status.Conditions,
@@ -447,10 +456,10 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				)
 				r.Recorder.Eventf(pe, nil, corev1.EventTypeWarning, "CapabilityFailed", "CapabilityFailed", failMsg)
 				logger.Info("PackExecution capability failed",
-					"name", pe.Name, "jobName", jobName, "resultCM", resultCMName,
+					"name", pe.Name, "jobName", jobName, "resultPOR", resultName,
 					"failedStep", func() string {
-						if opResult.FailureReason != nil {
-							return opResult.FailureReason.FailedStep
+						if porFailureReason != nil {
+							return porFailureReason.FailedStep
 						}
 						return ""
 					}(),
@@ -469,45 +478,18 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 					infrav1alpha1.ConditionTypePackExecutionSucceeded,
 					metav1.ConditionTrue,
 					infrav1alpha1.ReasonJobSucceeded,
-					"pack-deploy Job completed and OperationResult written.",
+					"pack-deploy Job completed and PackOperationResult written.",
 					pe.Generation,
 				)
 				r.Recorder.Eventf(pe, nil, corev1.EventTypeNormal, "Succeeded", "Succeeded", "pack-deploy Job completed successfully.")
 				logger.Info("PackExecution succeeded",
-					"name", pe.Name, "jobName", jobName, "resultCM", resultCMName)
-			}
-
-			// Fix 3 — Attach Job OwnerReference to OperationResult ConfigMap so it
-			// is garbage-collected when the Job TTL expires. Idempotent: skips if the
-			// reference is already present. Non-fatal if patching fails.
-			jobOwnerRef := metav1.OwnerReference{
-				APIVersion:         "batch/v1",
-				Kind:               "Job",
-				Name:               existingJob.Name,
-				UID:                existingJob.UID,
-				Controller:         boolPtr(false),
-				BlockOwnerDeletion: boolPtr(true),
-			}
-			alreadyOwned := false
-			for _, ref := range resultCM.OwnerReferences {
-				if ref.UID == existingJob.UID {
-					alreadyOwned = true
-					break
-				}
-			}
-			if !alreadyOwned {
-				cmPatch := client.MergeFrom(resultCM.DeepCopy())
-				resultCM.OwnerReferences = append(resultCM.OwnerReferences, jobOwnerRef)
-				if patchErr := r.Client.Patch(ctx, resultCM, cmPatch); patchErr != nil {
-					logger.Error(patchErr, "failed to patch OperationResult ConfigMap with Job owner reference",
-						"cmName", resultCMName)
-				}
+					"name", pe.Name, "jobName", jobName, "resultPOR", resultName)
 			}
 
 			// Step I.b — Create PackInstance only on capability success.
 			// A failed capability means the workload was not (fully) delivered;
 			// recording a PackInstance would misrepresent the cluster state.
-			if opResult.Status == "Failed" {
+			if porStatus == seamv1alpha1.PackResultFailed {
 				return ctrl.Result{}, nil
 			}
 
@@ -525,6 +507,10 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			}
 			piName := piBaseName + "-" + pe.Spec.TargetClusterRef
 			piNamespace := "seam-tenant-" + pe.Spec.TargetClusterRef
+
+			// Determine upgradeDirection by comparing existing PackInstance version.
+			upgradeDir := packUpgradeDirection(ctx, r.Client, piName, piNamespace, cp.Spec.Version)
+
 			pi := &infrav1alpha1.PackInstance{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      piName,
@@ -571,30 +557,29 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			logger.Info("PackInstance created or updated",
 				"name", piName, "namespace", piNamespace)
 
-			// Write DeployedResources to PackInstance status so the deletion handler
-			// can clean up workload resources without re-pulling the OCI artifact.
-			// INV-006: no Jobs on the delete path. wrapper-schema.md §3, Decision 11.
-			if len(opResult.DeployedResources) > 0 {
-				piStatus := &infrav1alpha1.PackInstance{}
-				piKey := client.ObjectKey{Name: piName, Namespace: piNamespace}
-				if getErr := r.Client.Get(ctx, piKey, piStatus); getErr == nil {
-					piPatch := client.MergeFrom(piStatus.DeepCopy())
-					// Replace DeployedResources (not append) to reflect the current deployment.
-					// On version supersession the previous resource list is replaced with
-					// the new one so the deletion handler cleans up the correct resources.
-					newRefs := make([]infrav1alpha1.DeployedResourceRef, 0, len(opResult.DeployedResources))
-					for _, dr := range opResult.DeployedResources {
-						newRefs = append(newRefs, infrav1alpha1.DeployedResourceRef{
-							APIVersion: dr.APIVersion,
-							Kind:       dr.Kind,
-							Namespace:  dr.Namespace,
-							Name:       dr.Name,
-						})
-					}
-					piStatus.Status.DeployedResources = newRefs
-					if patchErr := r.Client.Status().Patch(ctx, piStatus, piPatch); patchErr != nil {
-						logger.Error(patchErr, "failed to patch PackInstance DeployedResources", "name", piName)
-					}
+			// Write DeployedResources and UpgradeDirection to PackInstance status.
+			// DeployedResources enables deletion cleanup (INV-006: no Jobs on delete path).
+			// UpgradeDirection enables rollback tracking. wrapper-schema.md §3, Decision 11.
+			piStatus := &infrav1alpha1.PackInstance{}
+			piKey := client.ObjectKey{Name: piName, Namespace: piNamespace}
+			if getErr := r.Client.Get(ctx, piKey, piStatus); getErr == nil {
+				piPatch := client.MergeFrom(piStatus.DeepCopy())
+				// Replace DeployedResources (not append) to reflect the current deployment.
+				// On version supersession the previous resource list is replaced with
+				// the new one so the deletion handler cleans up the correct resources.
+				newRefs := make([]infrav1alpha1.DeployedResourceRef, 0, len(porDeployedResources))
+				for _, dr := range porDeployedResources {
+					newRefs = append(newRefs, infrav1alpha1.DeployedResourceRef{
+						APIVersion: dr.APIVersion,
+						Kind:       dr.Kind,
+						Namespace:  dr.Namespace,
+						Name:       dr.Name,
+					})
+				}
+				piStatus.Status.DeployedResources = newRefs
+				piStatus.Status.UpgradeDirection = string(upgradeDir)
+				if patchErr := r.Client.Status().Patch(ctx, piStatus, piPatch); patchErr != nil {
+					logger.Error(patchErr, "failed to patch PackInstance status", "name", piName)
 				}
 			}
 
@@ -698,7 +683,7 @@ func (r *PackExecutionReconciler) isPermissionSnapshotCurrent(ctx context.Contex
 
 // isRBACProfileProvisioned reads the RBACProfile referenced by the PackExecution
 // via unstructured to avoid importing guardian types. Returns true if the profile
-// has provisioned=true in its status. RBACProfiles live exclusively in seam-system.
+// has provisioned=true in its status. Pack RBACProfiles live in seam-tenant-{targetCluster}.
 // guardian-schema.md §RBACProfile.
 func (r *PackExecutionReconciler) isRBACProfileProvisioned(ctx context.Context, pe *infrav1alpha1.PackExecution) (bool, error) {
 	rp := &unstructured.Unstructured{}
@@ -709,7 +694,7 @@ func (r *PackExecutionReconciler) isRBACProfileProvisioned(ctx context.Context, 
 	})
 	rpKey := types.NamespacedName{
 		Name:      pe.Spec.AdmissionProfileRef,
-		Namespace: "seam-system",
+		Namespace: "seam-tenant-" + pe.Spec.TargetClusterRef,
 	}
 	if err := r.Client.Get(ctx, rpKey, rp); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -961,6 +946,69 @@ func (r *PackExecutionReconciler) mapSnapshotToPackExecutions(
 		}
 	}
 	return requests
+}
+
+// packUpgradeDirection determines the upgrade direction for a PackInstance by
+// comparing the existing version (if any) with newVersion. Returns:
+//
+//	Initial  — no existing PackInstance found
+//	Redeploy — same version reapplied
+//	Upgrade  — newVersion is newer than existing
+//	Rollback — newVersion is older than existing
+func packUpgradeDirection(
+	ctx context.Context,
+	c client.Client,
+	piName, piNamespace, newVersion string,
+) seamv1alpha1.PackUpgradeDirection {
+	existing := &infrav1alpha1.PackInstance{}
+	if err := c.Get(ctx, client.ObjectKey{Name: piName, Namespace: piNamespace}, existing); err != nil {
+		return seamv1alpha1.PackUpgradeDirectionInitial
+	}
+	existingVer := existing.Spec.Version
+	if existingVer == "" {
+		return seamv1alpha1.PackUpgradeDirectionInitial
+	}
+	cmp := comparePackVersion(existingVer, newVersion)
+	switch {
+	case cmp == 0:
+		return seamv1alpha1.PackUpgradeDirectionRedeploy
+	case cmp < 0:
+		return seamv1alpha1.PackUpgradeDirectionUpgrade
+	default:
+		return seamv1alpha1.PackUpgradeDirectionRollback
+	}
+}
+
+// comparePackVersion compares two pack versions in vX.Y.Z-rN format.
+// Returns negative if a < b, zero if equal, positive if a > b.
+// Falls back to lexicographic comparison if format is unrecognised.
+func comparePackVersion(a, b string) int {
+	av := parsePackVer(a)
+	bv := parsePackVer(b)
+	for i := range av {
+		if av[i] != bv[i] {
+			return av[i] - bv[i]
+		}
+	}
+	return 0
+}
+
+// parsePackVer parses a pack version string into a [4]int of {major, minor, patch, rev}.
+// Unrecognised formats return all zeros.
+func parsePackVer(v string) [4]int {
+	v = strings.TrimPrefix(v, "v")
+	parts := strings.SplitN(v, "-r", 2)
+	semParts := strings.SplitN(parts[0], ".", 3)
+	var out [4]int
+	if len(semParts) == 3 {
+		out[0], _ = strconv.Atoi(semParts[0])
+		out[1], _ = strconv.Atoi(semParts[1])
+		out[2], _ = strconv.Atoi(semParts[2])
+	}
+	if len(parts) == 2 {
+		out[3], _ = strconv.Atoi(parts[1])
+	}
+	return out
 }
 
 // mapRBACProfileToPackExecutions maps an RBACProfile update to PackExecution requests

@@ -145,6 +145,15 @@ type PackInstanceStatus struct {
 	// +optional
 	DriftSummary string `json:"driftSummary,omitempty"`
 
+	// UpgradeDirection records the version transition direction for the last
+	// deployment of this PackInstance. Set by PackExecutionReconciler via semver
+	// comparison of the existing version against the new ClusterPack version.
+	// Initial: first deployment. Upgrade: newer version. Rollback: older version.
+	// Redeploy: same version reapplied. wrapper-schema.md §3, Decision 11.
+	// +optional
+	// +kubebuilder:validation:Enum=Initial;Upgrade;Rollback;Redeploy
+	UpgradeDirection string `json:"upgradeDirection,omitempty"`
+
 	// DeployedResources is the list of Kubernetes resources applied by the
 	// pack-deploy job. Written by PackExecutionReconciler on successful deployment.
 	// Used by the PackInstance deletion handler to clean up workload resources

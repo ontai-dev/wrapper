@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	batchv1 "k8s.io/api/batch/v1"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -17,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
+	seamv1alpha1 "github.com/ontai-dev/seam-core/api/v1alpha1"
 	infrav1alpha1 "github.com/ontai-dev/wrapper/api/v1alpha1"
 )
 
@@ -30,6 +30,9 @@ func buildTestScheme(t *testing.T) *runtime.Scheme {
 	}
 	if err := infrav1alpha1.AddToScheme(s); err != nil {
 		t.Fatalf("AddToScheme infrav1alpha1: %v", err)
+	}
+	if err := seamv1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("AddToScheme seamv1alpha1: %v", err)
 	}
 	return s
 }
@@ -198,17 +201,18 @@ func newJob(name, namespace string, succeeded, failed int32) *batchv1.Job {
 	}
 }
 
-// newOperationResultCM returns the OperationResult ConfigMap written by the
+// newOperationResultPOR returns a PackOperationResult CR written by the
 // conductor executor after pack-deploy Job success. Name follows the convention
 // "pack-deploy-result-{peName}".
-func newOperationResultCM(peName, namespace string) *corev1.ConfigMap {
-	return &corev1.ConfigMap{
+func newOperationResultPOR(peName, namespace string) *seamv1alpha1.PackOperationResult {
+	return &seamv1alpha1.PackOperationResult{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "pack-deploy-result-" + peName,
 			Namespace: namespace,
 		},
-		Data: map[string]string{
-			"result": "success",
+		Spec: seamv1alpha1.PackOperationResultSpec{
+			Capability: "pack-deploy",
+			Status:     seamv1alpha1.PackResultSucceeded,
 		},
 	}
 }

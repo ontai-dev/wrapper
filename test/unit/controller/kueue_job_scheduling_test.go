@@ -318,7 +318,7 @@ func TestJobFailed_PackExecutionFailed(t *testing.T) {
 }
 
 // TestJobSucceeded_PackExecutionSucceeded verifies that when the pack-deploy Job
-// reports Status.Succeeded > 0 and the OperationResult ConfigMap exists:
+// reports Status.Succeeded > 0 and the PackOperationResult CR exists:
 //   - PackExecution Succeeded=True
 //   - OperationResultRef is set
 //   - PackInstance is created
@@ -334,14 +334,14 @@ func TestJobSucceeded_PackExecutionSucceeded(t *testing.T) {
 	fakeClient, pe := allGatesSetup(t, peName, cpName, cpVersion, clusterRef, profileRef)
 	ctx := context.Background()
 
-	// Pre-create succeeded Job and OperationResult ConfigMap.
+	// Pre-create succeeded Job and PackOperationResult CR.
 	succeededJob := newJob(packDeployJobName(peName), "infra-system", 1, 0)
-	cm := newOperationResultCM(peName, "infra-system")
+	por := newOperationResultPOR(peName, "infra-system")
 	if err := fakeClient.Create(ctx, succeededJob); err != nil {
 		t.Fatalf("create succeeded Job: %v", err)
 	}
-	if err := fakeClient.Create(ctx, cm); err != nil {
-		t.Fatalf("create OperationResult CM: %v", err)
+	if err := fakeClient.Create(ctx, por); err != nil {
+		t.Fatalf("create PackOperationResult: %v", err)
 	}
 
 	r := &controller.PackExecutionReconciler{

@@ -292,6 +292,19 @@ spec:
                 description: ObservedGeneration is the generation most recently reconciled.
                 format: int64
                 type: integer
+              upgradeDirection:
+                description: |-
+                  UpgradeDirection records the version transition direction for the last
+                  deployment of this PackInstance. Set by PackExecutionReconciler via semver
+                  comparison of the existing version against the new ClusterPack version.
+                  Initial: first deployment. Upgrade: newer version. Rollback: older version.
+                  Redeploy: same version reapplied. wrapper-schema.md §3, Decision 11.
+                enum:
+                - Initial
+                - Upgrade
+                - Rollback
+                - Redeploy
+                type: string
             type: object
         type: object
     served: true
