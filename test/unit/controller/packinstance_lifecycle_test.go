@@ -59,7 +59,7 @@ func allGatesSetup(t *testing.T, peName, cpName, cpVersion, clusterRef, profileR
 	tc := newTalosCluster(clusterRef, true)
 	rc := newRunnerConfig(clusterRef, 1) // gate 0: RunnerConfig with 1 capability
 	ps := newPermissionSnapshot("snapshot-"+clusterRef, "seam-system", true)
-	rp := newRBACProfile(profileRef, "seam-system", true)
+	rp := newRBACProfile(profileRef, "seam-tenant-"+clusterRef, true)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
@@ -79,7 +79,7 @@ func allGatesSetup(t *testing.T, peName, cpName, cpVersion, clusterRef, profileR
 //
 // Setup: signed ClusterPack + PackExecution (ownerRef to ClusterPack) + TalosCluster
 // (ConductorReady=True) + current PermissionSnapshot + provisioned RBACProfile +
-// pack-deploy Job (Succeeded=1) + OperationResult ConfigMap.
+// pack-deploy Job (Succeeded=1) + PackOperationResult CR.
 //
 // Assertions:
 //  1. PackExecution has ownerRef to ClusterPack (ownership chain structure).
@@ -98,14 +98,14 @@ func TestOwnershipChain_TalosClusterExists(t *testing.T) {
 	fakeClient, pe := allGatesSetup(t, peName, cpName, cpVersion, clusterRef, profileRef)
 	ctx := context.Background()
 
-	// Add succeeded Job and OperationResult CM.
+	// Add succeeded Job and PackOperationResult CR.
 	job := newJob(packDeployJobName(peName), "infra-system", 1, 0)
-	cm := newOperationResultCM(peName, "infra-system")
+	por := newOperationResultPOR(peName, "infra-system")
 	if err := fakeClient.Create(ctx, job); err != nil {
 		t.Fatalf("create Job: %v", err)
 	}
-	if err := fakeClient.Create(ctx, cm); err != nil {
-		t.Fatalf("create OperationResult CM: %v", err)
+	if err := fakeClient.Create(ctx, por); err != nil {
+		t.Fatalf("create PackOperationResult: %v", err)
 	}
 
 	r := &controller.PackExecutionReconciler{
@@ -484,7 +484,7 @@ func TestGate2_PackRevoked(t *testing.T) {
 	tc := newTalosCluster(clusterRef, true)
 	rc := newRunnerConfig(clusterRef, 1) // gate 0 must clear to reach gate 2
 	ps := newPermissionSnapshot("snapshot-"+clusterRef, "seam-system", true)
-	rp := newRBACProfile(profileRef, "seam-system", true)
+	rp := newRBACProfile(profileRef, "seam-tenant-"+clusterRef, true)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
@@ -545,7 +545,7 @@ func TestGate3_PermissionSnapshotOutOfSync(t *testing.T) {
 	tc := newTalosCluster(clusterRef, true)
 	rc := newRunnerConfig(clusterRef, 1) // gate 0 must clear to reach gate 3
 	ps := newPermissionSnapshot("snapshot-"+clusterRef, "seam-system", false) // fresh=false
-	rp := newRBACProfile(profileRef, "seam-system", true)
+	rp := newRBACProfile(profileRef, "seam-tenant-"+clusterRef, true)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
@@ -608,7 +608,7 @@ func TestGate4_RBACProfileNotProvisioned(t *testing.T) {
 	tc := newTalosCluster(clusterRef, true)
 	rc := newRunnerConfig(clusterRef, 1) // gate 0 must clear to reach gate 4
 	ps := newPermissionSnapshot("snapshot-"+clusterRef, "seam-system", true)
-	rp := newRBACProfile(profileRef, "seam-system", false) // provisioned=false
+	rp := newRBACProfile(profileRef, "seam-tenant-"+clusterRef, false) // provisioned=false
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
@@ -679,7 +679,7 @@ func TestConductorReady_ManagementClusterFallback_SeamSystem(t *testing.T) {
 
 	rc := newRunnerConfig(clusterRef, 1)
 	ps := newPermissionSnapshot("snapshot-"+clusterRef, "seam-system", true)
-	rp := newRBACProfile(profileRef, "seam-system", true)
+	rp := newRBACProfile(profileRef, "seam-tenant-"+clusterRef, true)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).

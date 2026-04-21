@@ -12,9 +12,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/tools/clientcmd"
 	clientevents "k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	infrav1alpha1 "github.com/ontai-dev/wrapper/api/v1alpha1"
@@ -23,6 +26,12 @@ import (
 // driftCheckInterval is how often the reconciler re-reads PackReceipt drift status
 // to update the Drifted condition. wrapper-schema.md §3 PackInstance.
 const driftCheckInterval = 60 * time.Second
+
+// workloadCleanupFinalizer is the finalizer added to PackInstances that have a
+// non-empty DeployedResources list. The deletion handler removes all deployed
+// resources from the target cluster before allowing the PackInstance to be deleted.
+// INV-006: no Jobs on the delete path. wrapper-schema.md §3, Decision 11.
+const workloadCleanupFinalizer = "infra.ontai.dev/workload-cleanup"
 
 // PackInstanceReconciler watches PackInstance CRs and reflects drift state from
 // the target cluster conductor's PackReceipt.
@@ -69,6 +78,35 @@ func (r *PackInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, fmt.Errorf("failed to get PackInstance %s: %w", req.NamespacedName, err)
+	}
+
+	// Step A.1 — Handle deletion: run workload cleanup finalizer.
+	// INV-006: no Jobs on the delete path -- cleanup runs synchronously in the reconciler.
+	// wrapper-schema.md §3, Decision 11.
+	if !pi.DeletionTimestamp.IsZero() {
+		if controllerutil.ContainsFinalizer(pi, workloadCleanupFinalizer) {
+			if err := r.cleanupDeployedResources(ctx, pi); err != nil {
+				logger.Error(err, "workload cleanup failed; will retry",
+					"name", pi.Name, "namespace", pi.Namespace)
+				return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+			}
+			patch := client.MergeFrom(pi.DeepCopy())
+			controllerutil.RemoveFinalizer(pi, workloadCleanupFinalizer)
+			if err := r.Client.Patch(ctx, pi, patch); err != nil {
+				return ctrl.Result{}, fmt.Errorf("remove workload-cleanup finalizer: %w", err)
+			}
+		}
+		return ctrl.Result{}, nil
+	}
+
+	// Step A.2 — Ensure the workload cleanup finalizer is present when DeployedResources
+	// is non-empty so we can clean up on deletion.
+	if len(pi.Status.DeployedResources) > 0 && !controllerutil.ContainsFinalizer(pi, workloadCleanupFinalizer) {
+		patch := client.MergeFrom(pi.DeepCopy())
+		controllerutil.AddFinalizer(pi, workloadCleanupFinalizer)
+		if err := r.Client.Patch(ctx, pi, patch); err != nil {
+			return ctrl.Result{}, fmt.Errorf("add workload-cleanup finalizer: %w", err)
+		}
 	}
 
 	// Step B — Deferred status patch.
@@ -376,6 +414,103 @@ func (r *PackInstanceReconciler) checkDependencyDrift(ctx context.Context, pi *i
 		}
 	}
 	return false, "", nil
+}
+
+// cleanupDeployedResources deletes each resource in pi.Status.DeployedResources from
+// the target cluster. Reads the kubeconfig from seam-mc-{targetCluster}-kubeconfig
+// Secret in the seam-tenant-{targetCluster} namespace. Errors are logged per resource
+// but do not abort the cleanup. Returns an error only if the kubeconfig is unreadable.
+// INV-006: no Jobs on the delete path. wrapper-schema.md §3, Decision 11.
+func (r *PackInstanceReconciler) cleanupDeployedResources(ctx context.Context, pi *infrav1alpha1.PackInstance) error {
+	logger := log.FromContext(ctx)
+	if len(pi.Status.DeployedResources) == 0 {
+		return nil
+	}
+
+	targetCluster := pi.Spec.TargetClusterRef
+	kubeconfigSecretName := "seam-mc-" + targetCluster + "-kubeconfig"
+	kubeconfigNamespace := "seam-tenant-" + targetCluster
+
+	kubeconfigSecret := &corev1.Secret{}
+	if err := r.Client.Get(ctx, client.ObjectKey{Name: kubeconfigSecretName, Namespace: kubeconfigNamespace}, kubeconfigSecret); err != nil {
+		return fmt.Errorf("get kubeconfig secret %s/%s: %w", kubeconfigNamespace, kubeconfigSecretName, err)
+	}
+	kubeconfigData, ok := kubeconfigSecret.Data["value"]
+	if !ok {
+		kubeconfigData = kubeconfigSecret.Data["kubeconfig"]
+	}
+	if len(kubeconfigData) == 0 {
+		return fmt.Errorf("kubeconfig secret %s/%s has no data key 'value' or 'kubeconfig'", kubeconfigNamespace, kubeconfigSecretName)
+	}
+
+	restConfig, err := clientcmd.RESTConfigFromKubeConfig(kubeconfigData)
+	if err != nil {
+		return fmt.Errorf("parse kubeconfig for cluster %s: %w", targetCluster, err)
+	}
+	dynClient, err := dynamic.NewForConfig(restConfig)
+	if err != nil {
+		return fmt.Errorf("create dynamic client for cluster %s: %w", targetCluster, err)
+	}
+
+	for _, res := range pi.Status.DeployedResources {
+		gv, parseErr := schema.ParseGroupVersion(res.APIVersion)
+		if parseErr != nil {
+			logger.Error(parseErr, "skip cleanup: failed to parse apiVersion",
+				"apiVersion", res.APIVersion, "kind", res.Kind, "name", res.Name)
+			continue
+		}
+		gvr := schema.GroupVersionResource{
+			Group:    gv.Group,
+			Version:  gv.Version,
+			Resource: lowercasePlural(res.Kind),
+		}
+		var delErr error
+		if res.Namespace != "" {
+			delErr = dynClient.Resource(gvr).Namespace(res.Namespace).Delete(ctx, res.Name, metav1.DeleteOptions{})
+		} else {
+			delErr = dynClient.Resource(gvr).Delete(ctx, res.Name, metav1.DeleteOptions{})
+		}
+		if delErr != nil && !apierrors.IsNotFound(delErr) {
+			logger.Error(delErr, "failed to delete resource during workload cleanup",
+				"apiVersion", res.APIVersion, "kind", res.Kind,
+				"namespace", res.Namespace, "name", res.Name)
+		} else {
+			logger.Info("deleted deployed resource",
+				"apiVersion", res.APIVersion, "kind", res.Kind,
+				"namespace", res.Namespace, "name", res.Name)
+		}
+	}
+	return nil
+}
+
+// lowercasePlural converts a Kubernetes Kind to its lowercase plural REST resource
+// name using simple English pluralization rules. Sufficient for core API kinds.
+func lowercasePlural(kind string) string {
+	if len(kind) == 0 {
+		return kind
+	}
+	lower := make([]byte, len(kind))
+	for i := 0; i < len(kind); i++ {
+		c := kind[i]
+		if c >= 'A' && c <= 'Z' {
+			lower[i] = c + 32
+		} else {
+			lower[i] = c
+		}
+	}
+	s := string(lower)
+	switch {
+	case len(s) > 0 && s[len(s)-1] == 's':
+		return s + "es"
+	case len(s) > 1 && s[len(s)-1] == 'y' && !piIsVowel(s[len(s)-2]):
+		return s[:len(s)-1] + "ies"
+	default:
+		return s + "s"
+	}
+}
+
+func piIsVowel(c byte) bool {
+	return c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u'
 }
 
 // SetupWithManager registers PackInstanceReconciler as the controller for PackInstance.

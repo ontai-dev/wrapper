@@ -273,7 +273,7 @@ func TestPackExecutionReconciler_Gate3_SnapshotOutOfSync(t *testing.T) {
 	cp := newSignedClusterPack("my-pack", "infra-system", "v1.0.0")
 	pe := newPackExecution("exec-snap", "infra-system", "my-pack", "v1.0.0", "cluster-a", "profile-a")
 	ps := newPermissionSnapshot("snapshot-cluster-a", "seam-system", false)
-	profile := newRBACProfile("profile-a", "seam-system", true)
+	profile := newRBACProfile("profile-a", "seam-tenant-cluster-a", true)
 	// TalosCluster + RunnerConfig with capabilities satisfies gate 0; gate 3 is the first to block.
 	tc := newTalosClusterWithConductorReady("cluster-a", true)
 	rc := newRunnerConfig("cluster-a", 1)
@@ -322,7 +322,7 @@ func TestPackExecutionReconciler_Gate4_RBACProfileNotProvisioned(t *testing.T) {
 	cp := newSignedClusterPack("my-pack", "infra-system", "v1.0.0")
 	pe := newPackExecution("exec-rbac", "infra-system", "my-pack", "v1.0.0", "cluster-a", "profile-a")
 	ps := newPermissionSnapshot("snapshot-cluster-a", "seam-system", true)
-	profile := newRBACProfile("profile-a", "seam-system", false)
+	profile := newRBACProfile("profile-a", "seam-tenant-cluster-a", false)
 	// TalosCluster + RunnerConfig with capabilities satisfies gate 0; gate 4 is the first to block.
 	tc := newTalosClusterWithConductorReady("cluster-a", true)
 	rc := newRunnerConfig("cluster-a", 1)
@@ -371,7 +371,7 @@ func TestPackExecutionReconciler_AllGatesClear_JobSubmitted(t *testing.T) {
 	cp := newSignedClusterPack("my-pack", "infra-system", "v1.0.0")
 	pe := newPackExecution("exec-submit", "infra-system", "my-pack", "v1.0.0", "cluster-a", "profile-a")
 	ps := newPermissionSnapshot("snapshot-cluster-a", "seam-system", true)
-	profile := newRBACProfile("profile-a", "seam-system", true)
+	profile := newRBACProfile("profile-a", "seam-tenant-cluster-a", true)
 	// TalosCluster + RunnerConfig with capabilities satisfies gate 0.
 	tc := newTalosClusterWithConductorReady("cluster-a", true)
 	rc := newRunnerConfig("cluster-a", 1)

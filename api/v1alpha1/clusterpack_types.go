@@ -133,6 +133,14 @@ type ClusterPackSpec struct {
 	// +optional
 	WorkloadDigest string `json:"workloadDigest,omitempty"`
 
+	// BasePackName is the logical pack name shared across versions (e.g., "nginx-ingress").
+	// Separate from the versioned CR name (e.g., "nginx-ingress-v4.9.0-r1"). When set,
+	// PackInstances are named {basePackName}-{clusterName} so that a newer version of the
+	// same base pack supersedes an older one in-place rather than creating a parallel
+	// PackInstance. Schema-first per Decision 11.
+	// +optional
+	BasePackName string `json:"basePackName,omitempty"`
+
 	// TargetClusters is the list of cluster names to which this ClusterPack should
 	// be delivered. The ClusterPackReconciler creates one RunnerConfig per entry in
 	// seam-tenant-{clusterName} after signing completes. wrapper-schema.md §4.

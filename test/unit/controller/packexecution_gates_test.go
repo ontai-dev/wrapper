@@ -145,7 +145,7 @@ func TestAC2_Gate4_PackExecution_BlockedWhenRBACNotProvisioned(t *testing.T) {
 	tc := newTalosCluster("cluster-ac2g4", true)
 	rc := newRunnerConfig("cluster-ac2g4", 1)
 	ps := newPermissionSnapshot("snapshot-cluster-ac2g4", "seam-system", true)
-	rp := newRBACProfile("profile-ac2g4", "seam-system", false) // provisioned=false
+	rp := newRBACProfile("profile-ac2g4", "seam-tenant-cluster-ac2g4", false) // provisioned=false
 
 	c := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).

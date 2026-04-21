@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
+	seamv1alpha1 "github.com/ontai-dev/seam-core/api/v1alpha1"
 	infrav1alpha1 "github.com/ontai-dev/wrapper/api/v1alpha1"
 	"github.com/ontai-dev/wrapper/internal/controller"
 )
@@ -27,6 +28,7 @@ var scheme = runtime.NewScheme()
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(infrav1alpha1.AddToScheme(scheme))
+	utilruntime.Must(seamv1alpha1.AddToScheme(scheme))
 }
 
 func main() {
