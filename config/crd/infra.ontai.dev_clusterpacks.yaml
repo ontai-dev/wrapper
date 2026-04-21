@@ -197,6 +197,14 @@ spec:
                       from which the pack was built.
                     type: string
                 type: object
+              rbacDigest:
+                description: |-
+                  RBACDigest is the OCI digest of the RBAC layer of this ClusterPack artifact.
+                  Contains ServiceAccount, Role, ClusterRole, RoleBinding, ClusterRoleBinding
+                  manifests extracted at compile time. Guardian /rbac-intake processes this layer
+                  before workload apply proceeds. Absent on pre-split ClusterPack specs.
+                  wrapper-schema.md §4.
+                type: string
               registryRef:
                 description: RegistryRef identifies the OCI artifact for this pack.
                   Immutable after creation.
@@ -231,6 +239,13 @@ spec:
                   Version is the semantic version of this pack. Immutable after creation.
                   Must be a valid semver string (e.g., v1.2.3).
                 minLength: 1
+                type: string
+              workloadDigest:
+                description: |-
+                  WorkloadDigest is the OCI digest of the workload layer of this ClusterPack
+                  artifact. Contains all non-RBAC manifests. Applied after guardian RBACProfile
+                  for this pack reaches provisioned=true. Absent on pre-split ClusterPack specs.
+                  wrapper-schema.md §4.
                 type: string
             required:
             - checksum

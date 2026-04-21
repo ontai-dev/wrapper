@@ -151,6 +151,14 @@ Key spec fields:
 - version: declared version string. Immutable after creation.
 - registryRef: OCI registry URL and content digest (sha256).
 - checksum: content-addressed checksum of the full artifact manifest set.
+- rbacDigest: OCI digest of the RBAC layer. Contains ServiceAccount, Role,
+  ClusterRole, RoleBinding, ClusterRoleBinding manifests extracted at compile
+  time. Guardian /rbac-intake processes this layer before workload apply
+  proceeds. Absent on pre-split ClusterPack specs (backward compatibility).
+- workloadDigest: OCI digest of the workload layer. Contains all non-RBAC
+  manifests. Applied after guardian RBACProfile for this pack reaches
+  provisioned=true. Absent on pre-split ClusterPack specs (backward
+  compatibility).
 - sourceBuildRef: optional reference to the PackBuild spec file path in git
   (provenance only - not a cluster object reference).
 - executionOrder: stage ordering derived from the compiled execution graph.
@@ -162,6 +170,22 @@ Key spec fields:
   should be delivered. The ClusterPackReconciler creates one RunnerConfig per
   entry in seam-tenant-{clusterName}. ClusterAssignment is removed - pack-to-cluster
   binding is declared directly here.
+
+Two-layer OCI artifact contract:
+ClusterPack OCI artifacts carry two layers. The compiler packbuild command
+separates RBAC resources from workload resources at compile time. The
+pack-deploy capability processes the RBAC layer via guardian /rbac-intake
+before applying the workload layer. This ensures all ServiceAccount, Role,
+ClusterRole, RoleBinding, and ClusterRoleBinding resources in any ClusterPack
+are guardian-owned before any workload resource is applied.
+
+The RBAC layer is pushed with media type application/vnd.ontai.rbac.v1.
+The workload layer is pushed with media type application/vnd.ontai.workload.v1.
+
+When rbacDigest is absent on a ClusterPack spec (pre-split artifact), pack-deploy
+skips the guardian intake step and applies all manifests directly. This preserves
+backward compatibility with artifacts produced before the two-layer split was
+introduced.
 
 ClusterPack spec never contains: Helm templates, Kustomize overlays, variable
 references, runtime decision logic, or values from valuesSecretRef. Their presence
@@ -360,3 +384,10 @@ until signing is complete.
 *  Pack delivery ownership chain locked (Section 9): ClusterPack (human/GitOps),*
 *  RunnerConfig (ClusterPackReconciler), PackExecution (Conductor agent from RunnerConfig),*
 *  PackInstance (Wrapper after Job success), PackReceipt (target Conductor).*
+*2026-04-21 - Two-layer ClusterPack OCI artifact contract added (session/13-clusterpack-rbac-split).*
+*  ClusterPack spec gains rbacDigest and workloadDigest fields.*
+*  Compiler packbuild separates RBAC resources from workload resources at compile time.*
+*  Pack-deploy calls guardian /rbac-intake for RBAC layer before applying workload layer.*
+*  Backward compatibility: rbacDigest absent means single-layer fallback.*
+*  wrapper-runner Role restricted to workload resource kinds only.*
+*  wrapper-runner ClusterRole removed. Guardian intake owns all RBAC writes.*

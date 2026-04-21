@@ -118,6 +118,21 @@ type ClusterPackSpec struct {
 	// +optional
 	Provenance *PackProvenance `json:"provenance,omitempty"`
 
+	// RBACDigest is the OCI digest of the RBAC layer of this ClusterPack artifact.
+	// Contains ServiceAccount, Role, ClusterRole, RoleBinding, ClusterRoleBinding
+	// manifests extracted at compile time. Guardian /rbac-intake processes this layer
+	// before workload apply proceeds. Absent on pre-split ClusterPack specs.
+	// wrapper-schema.md §4.
+	// +optional
+	RBACDigest string `json:"rbacDigest,omitempty"`
+
+	// WorkloadDigest is the OCI digest of the workload layer of this ClusterPack
+	// artifact. Contains all non-RBAC manifests. Applied after guardian RBACProfile
+	// for this pack reaches provisioned=true. Absent on pre-split ClusterPack specs.
+	// wrapper-schema.md §4.
+	// +optional
+	WorkloadDigest string `json:"workloadDigest,omitempty"`
+
 	// TargetClusters is the list of cluster names to which this ClusterPack should
 	// be delivered. The ClusterPackReconciler creates one RunnerConfig per entry in
 	// seam-tenant-{clusterName} after signing completes. wrapper-schema.md §4.
