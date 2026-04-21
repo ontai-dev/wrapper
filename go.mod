@@ -9,7 +9,7 @@ replace github.com/ontai-dev/seam-core => ../seam-core
 require (
 	github.com/onsi/ginkgo/v2 v2.27.2
 	github.com/onsi/gomega v1.38.2
-	github.com/ontai-dev/seam-core v0.1.0-alpha.0.20260421091707-a688712f9dff
+	github.com/ontai-dev/seam-core v0.1.0-alpha.0.20260421234425-2e1c775ba8f9
 	k8s.io/api v0.35.3
 	k8s.io/apimachinery v0.35.3
 	k8s.io/client-go v0.35.0
