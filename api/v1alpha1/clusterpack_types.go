@@ -133,6 +133,15 @@ type ClusterPackSpec struct {
 	// +optional
 	WorkloadDigest string `json:"workloadDigest,omitempty"`
 
+	// ClusterScopedDigest is the OCI digest of the cluster-scoped non-RBAC layer.
+	// Contains MutatingWebhookConfiguration, ValidatingWebhookConfiguration,
+	// CustomResourceDefinition, APIService, PriorityClass, StorageClass,
+	// IngressClass, ClusterIssuer, and similar cluster-scoped resources.
+	// Applied after guardian RBAC intake and before workload manifests.
+	// Absent when the chart has no cluster-scoped resources. wrapper-schema.md §4.
+	// +optional
+	ClusterScopedDigest string `json:"clusterScopedDigest,omitempty"`
+
 	// BasePackName is the logical pack name shared across versions (e.g., "nginx-ingress").
 	// Separate from the versioned CR name (e.g., "nginx-ingress-v4.9.0-r1"). When set,
 	// PackInstances are named {basePackName}-{clusterName} so that a newer version of the
