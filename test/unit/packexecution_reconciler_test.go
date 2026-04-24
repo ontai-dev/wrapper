@@ -16,7 +16,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	infrav1alpha1 "github.com/ontai-dev/wrapper/api/v1alpha1"
+	seamcorev1alpha1 "github.com/ontai-dev/seam-core/api/v1alpha1"
+	"github.com/ontai-dev/seam-core/pkg/conditions"
 	"github.com/ontai-dev/wrapper/internal/controller"
 )
 
@@ -26,14 +27,14 @@ func newPackExecutionScheme(t *testing.T) *runtime.Scheme {
 	if err := clientgoscheme.AddToScheme(s); err != nil {
 		t.Fatalf("AddToScheme clientgo: %v", err)
 	}
-	if err := infrav1alpha1.AddToScheme(s); err != nil {
-		t.Fatalf("AddToScheme infrav1alpha1: %v", err)
+	if err := seamcorev1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("AddToScheme seamcorev1alpha1: %v", err)
 	}
 	return s
 }
 
-func newSignedClusterPack(name, namespace, version string) *infrav1alpha1.ClusterPack {
-	cp := &infrav1alpha1.ClusterPack{
+func newSignedClusterPack(name, namespace, version string) *seamcorev1alpha1.InfrastructureClusterPack {
+	cp := &seamcorev1alpha1.InfrastructureClusterPack{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
@@ -41,15 +42,15 @@ func newSignedClusterPack(name, namespace, version string) *infrav1alpha1.Cluste
 				"ontai.dev/pack-signature": "validsig==",
 			},
 		},
-		Spec: infrav1alpha1.ClusterPackSpec{
+		Spec: seamcorev1alpha1.InfrastructureClusterPackSpec{
 			Version: version,
-			RegistryRef: infrav1alpha1.PackRegistryRef{
+			RegistryRef: seamcorev1alpha1.InfrastructurePackRegistryRef{
 				URL:    "registry.ontai.dev/packs/" + name,
 				Digest: "sha256:abc123",
 			},
 			Checksum: "sha256:def456",
 		},
-		Status: infrav1alpha1.ClusterPackStatus{
+		Status: seamcorev1alpha1.InfrastructureClusterPackStatus{
 			Signed:        true,
 			PackSignature: "validsig==",
 		},
@@ -57,14 +58,14 @@ func newSignedClusterPack(name, namespace, version string) *infrav1alpha1.Cluste
 	return cp
 }
 
-func newPackExecution(name, namespace, packName, packVersion, clusterRef, profileRef string) *infrav1alpha1.PackExecution {
-	return &infrav1alpha1.PackExecution{
+func newPackExecution(name, namespace, packName, packVersion, clusterRef, profileRef string) *seamcorev1alpha1.InfrastructurePackExecution {
+	return &seamcorev1alpha1.InfrastructurePackExecution{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 		},
-		Spec: infrav1alpha1.PackExecutionSpec{
-			ClusterPackRef: infrav1alpha1.ClusterPackRef{
+		Spec: seamcorev1alpha1.InfrastructurePackExecutionSpec{
+			ClusterPackRef: seamcorev1alpha1.InfrastructureClusterPackRef{
 				Name:    packName,
 				Version: packVersion,
 			},
@@ -162,7 +163,7 @@ func newTalosClusterWithConductorReady(clusterName string, conductorReady bool) 
 	return tc
 }
 
-func reconcilePE(t *testing.T, r *controller.PackExecutionReconciler, pe *infrav1alpha1.PackExecution) ctrl.Result {
+func reconcilePE(t *testing.T, r *controller.PackExecutionReconciler, pe *seamcorev1alpha1.InfrastructurePackExecution) ctrl.Result {
 	t.Helper()
 	result, err := r.Reconcile(context.Background(), ctrl.Request{
 		NamespacedName: types.NamespacedName{Name: pe.Name, Namespace: pe.Namespace},
@@ -185,7 +186,7 @@ func TestPackExecutionReconciler_Gate1_SignaturePending(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
-		WithStatusSubresource(&infrav1alpha1.PackExecution{}, &infrav1alpha1.ClusterPack{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}, &seamcorev1alpha1.InfrastructureClusterPack{}).
 		Build()
 	if err := fakeClient.Create(context.Background(), tc); err != nil {
 		t.Fatalf("create TalosCluster: %v", err)
@@ -205,11 +206,11 @@ func TestPackExecutionReconciler_Gate1_SignaturePending(t *testing.T) {
 		t.Errorf("expected RequeueAfter=15s for signature gate, got %v", result.RequeueAfter)
 	}
 
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("get updated PackExecution: %v", err)
 	}
-	sigCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackSignaturePending)
+	sigCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackSignaturePending)
 	if sigCond == nil || sigCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected PackSignaturePending=True")
 	}
@@ -222,9 +223,9 @@ func TestPackExecutionReconciler_Gate2_PackRevoked(t *testing.T) {
 	cp := newSignedClusterPack("my-pack", "infra-system", "v1.0.0")
 	cp.Status.Conditions = []metav1.Condition{
 		{
-			Type:               infrav1alpha1.ConditionTypeClusterPackRevoked,
+			Type:               conditions.ConditionTypeClusterPackRevoked,
 			Status:             metav1.ConditionTrue,
-			Reason:             infrav1alpha1.ReasonPackRevoked,
+			Reason:             conditions.ReasonPackRevoked,
 			Message:            "revoked by admin",
 			LastTransitionTime: metav1.Now(),
 		},
@@ -236,7 +237,7 @@ func TestPackExecutionReconciler_Gate2_PackRevoked(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
-		WithStatusSubresource(&infrav1alpha1.PackExecution{}, &infrav1alpha1.ClusterPack{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}, &seamcorev1alpha1.InfrastructureClusterPack{}).
 		Build()
 	if err := fakeClient.Create(context.Background(), tc); err != nil {
 		t.Fatalf("create TalosCluster: %v", err)
@@ -256,11 +257,11 @@ func TestPackExecutionReconciler_Gate2_PackRevoked(t *testing.T) {
 		t.Errorf("expected no requeue for revoked pack, got %+v", result)
 	}
 
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("get updated PackExecution: %v", err)
 	}
-	revokedCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackRevoked)
+	revokedCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackRevoked)
 	if revokedCond == nil || revokedCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected PackRevoked=True condition")
 	}
@@ -280,7 +281,7 @@ func TestPackExecutionReconciler_Gate3_SnapshotOutOfSync(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe, profile).
-		WithStatusSubresource(&infrav1alpha1.PackExecution{}, &infrav1alpha1.ClusterPack{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}, &seamcorev1alpha1.InfrastructureClusterPack{}).
 		Build()
 	// Add unstructured PermissionSnapshot.
 	if err := fakeClient.Create(context.Background(), ps); err != nil {
@@ -305,11 +306,11 @@ func TestPackExecutionReconciler_Gate3_SnapshotOutOfSync(t *testing.T) {
 		t.Errorf("expected RequeueAfter=30s for snapshot gate, got %v", result.RequeueAfter)
 	}
 
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("get updated PackExecution: %v", err)
 	}
-	snapCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePermissionSnapshotOutOfSync)
+	snapCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePermissionSnapshotOutOfSync)
 	if snapCond == nil || snapCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected PermissionSnapshotOutOfSync=True")
 	}
@@ -329,7 +330,7 @@ func TestPackExecutionReconciler_Gate4_RBACProfileNotProvisioned(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe, profile).
-		WithStatusSubresource(&infrav1alpha1.PackExecution{}, &infrav1alpha1.ClusterPack{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}, &seamcorev1alpha1.InfrastructureClusterPack{}).
 		Build()
 	if err := fakeClient.Create(context.Background(), ps); err != nil {
 		t.Fatalf("create PermissionSnapshot: %v", err)
@@ -353,11 +354,11 @@ func TestPackExecutionReconciler_Gate4_RBACProfileNotProvisioned(t *testing.T) {
 		t.Errorf("expected RequeueAfter=30s for RBAC gate, got %v", result.RequeueAfter)
 	}
 
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("get updated PackExecution: %v", err)
 	}
-	rbacCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypeRBACProfileNotProvisioned)
+	rbacCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypeRBACProfileNotProvisioned)
 	if rbacCond == nil || rbacCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected RBACProfileNotProvisioned=True")
 	}
@@ -378,7 +379,7 @@ func TestPackExecutionReconciler_AllGatesClear_JobSubmitted(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe, profile).
-		WithStatusSubresource(&infrav1alpha1.PackExecution{}, &infrav1alpha1.ClusterPack{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}, &seamcorev1alpha1.InfrastructureClusterPack{}).
 		Build()
 	if err := fakeClient.Create(context.Background(), ps); err != nil {
 		t.Fatalf("create PermissionSnapshot: %v", err)
@@ -428,11 +429,11 @@ func TestPackExecutionReconciler_AllGatesClear_JobSubmitted(t *testing.T) {
 	}
 
 	// Verify PackExecution status shows Running.
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("get updated PackExecution: %v", err)
 	}
-	runningCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionRunning)
+	runningCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackExecutionRunning)
 	if runningCond == nil || runningCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected Running=True after Job submit")
 	}
@@ -447,7 +448,7 @@ func TestPackExecutionReconciler_LineageSyncedInitialized(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
-		WithStatusSubresource(&infrav1alpha1.PackExecution{}, &infrav1alpha1.ClusterPack{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}, &seamcorev1alpha1.InfrastructureClusterPack{}).
 		Build()
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
@@ -457,11 +458,11 @@ func TestPackExecutionReconciler_LineageSyncedInitialized(t *testing.T) {
 
 	reconcilePE(t, r, pe)
 
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("get updated PackExecution: %v", err)
 	}
-	lineageCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypeLineageSynced)
+	lineageCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypeLineageSynced)
 	if lineageCond == nil {
 		t.Fatal("expected LineageSynced condition")
 	}
@@ -483,7 +484,7 @@ func TestPackExecutionReconciler_Gate0_ConductorReadyAbsent(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
-		WithStatusSubresource(&infrav1alpha1.PackExecution{}, &infrav1alpha1.ClusterPack{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}, &seamcorev1alpha1.InfrastructureClusterPack{}).
 		Build()
 	r := &controller.PackExecutionReconciler{
 		Client:   fakeClient,
@@ -498,17 +499,17 @@ func TestPackExecutionReconciler_Gate0_ConductorReadyAbsent(t *testing.T) {
 		t.Errorf("expected RequeueAfter=30s for ConductorReady gate, got %v", result.RequeueAfter)
 	}
 
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("get updated PackExecution: %v", err)
 	}
-	waitingCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionWaiting)
+	waitingCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackExecutionWaiting)
 	if waitingCond == nil || waitingCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected Waiting=True when TalosCluster absent")
 	}
-	if waitingCond.Reason != infrav1alpha1.ReasonAwaitingConductorReady {
+	if waitingCond.Reason != conditions.ReasonAwaitingConductorReady {
 		t.Errorf("expected reason %q, got %q",
-			infrav1alpha1.ReasonAwaitingConductorReady, waitingCond.Reason)
+			conditions.ReasonAwaitingConductorReady, waitingCond.Reason)
 	}
 }
 
@@ -524,7 +525,7 @@ func TestPackExecutionReconciler_Gate0_ConductorReadyFalse(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
-		WithStatusSubresource(&infrav1alpha1.PackExecution{}, &infrav1alpha1.ClusterPack{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}, &seamcorev1alpha1.InfrastructureClusterPack{}).
 		Build()
 	if err := fakeClient.Create(context.Background(), tc); err != nil {
 		t.Fatalf("create TalosCluster: %v", err)
@@ -542,11 +543,11 @@ func TestPackExecutionReconciler_Gate0_ConductorReadyFalse(t *testing.T) {
 		t.Errorf("expected RequeueAfter=30s for ConductorReady gate (False), got %v", result.RequeueAfter)
 	}
 
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("get updated PackExecution: %v", err)
 	}
-	waitingCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionWaiting)
+	waitingCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackExecutionWaiting)
 	if waitingCond == nil || waitingCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected Waiting=True when ConductorReady=False")
 	}
@@ -566,7 +567,7 @@ func TestPackExecutionReconciler_Gate0_ConductorReadyTrue_ProceedsToSignatureGat
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
-		WithStatusSubresource(&infrav1alpha1.PackExecution{}, &infrav1alpha1.ClusterPack{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}, &seamcorev1alpha1.InfrastructureClusterPack{}).
 		Build()
 	if err := fakeClient.Create(context.Background(), tc); err != nil {
 		t.Fatalf("create TalosCluster: %v", err)
@@ -588,19 +589,19 @@ func TestPackExecutionReconciler_Gate0_ConductorReadyTrue_ProceedsToSignatureGat
 		t.Errorf("expected RequeueAfter=15s (signature gate), got %v — gate 0 may not have cleared", result.RequeueAfter)
 	}
 
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("get updated PackExecution: %v", err)
 	}
 
 	// Waiting condition must be False (gate 0 cleared).
-	waitingCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionWaiting)
+	waitingCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackExecutionWaiting)
 	if waitingCond == nil || waitingCond.Status != metav1.ConditionFalse {
 		t.Errorf("expected Waiting=False when ConductorReady=True (gate 0 cleared), got %v", waitingCond)
 	}
 
 	// Gate 1 (signature) must have fired.
-	sigCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackSignaturePending)
+	sigCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackSignaturePending)
 	if sigCond == nil || sigCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected PackSignaturePending=True when signature gate fires after gate 0 clears")
 	}

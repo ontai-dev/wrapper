@@ -14,7 +14,6 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	seamv1alpha1 "github.com/ontai-dev/seam-core/api/v1alpha1"
-	infrav1alpha1 "github.com/ontai-dev/wrapper/api/v1alpha1"
 	controller "github.com/ontai-dev/wrapper/internal/controller"
 )
 
@@ -39,13 +38,13 @@ func deployPack(t *testing.T, cpVersion, existingPIVersion string) string {
 	if existingPIVersion != "" {
 		piName := cpName + "-" + clusterRef
 		piNS := "seam-tenant-" + clusterRef
-		existing := &infrav1alpha1.PackInstance{
+		existing := &seamv1alpha1.InfrastructurePackInstance{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      piName,
 				Namespace: piNS,
 				UID:       types.UID("uid-pi-existing"),
 			},
-			Spec: infrav1alpha1.PackInstanceSpec{
+			Spec: seamv1alpha1.InfrastructurePackInstanceSpec{
 				ClusterPackRef:   cpName,
 				Version:          existingPIVersion,
 				TargetClusterRef: clusterRef,
@@ -72,7 +71,7 @@ func deployPack(t *testing.T, cpVersion, existingPIVersion string) string {
 	}
 	reconcilePackExecution(t, r, peName, peNS)
 
-	pi := &infrav1alpha1.PackInstance{}
+	pi := &seamv1alpha1.InfrastructurePackInstance{}
 	piKey := ctrlclient.ObjectKey{
 		Name:      cpName + "-" + clusterRef,
 		Namespace: "seam-tenant-" + clusterRef,

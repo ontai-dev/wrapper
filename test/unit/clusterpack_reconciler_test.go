@@ -14,7 +14,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	infrav1alpha1 "github.com/ontai-dev/wrapper/api/v1alpha1"
+	seamcorev1alpha1 "github.com/ontai-dev/seam-core/api/v1alpha1"
+	"github.com/ontai-dev/seam-core/pkg/conditions"
 	"github.com/ontai-dev/wrapper/internal/controller"
 )
 
@@ -24,22 +25,22 @@ func newClusterPackScheme(t *testing.T) *runtime.Scheme {
 	if err := clientgoscheme.AddToScheme(s); err != nil {
 		t.Fatalf("AddToScheme clientgo: %v", err)
 	}
-	if err := infrav1alpha1.AddToScheme(s); err != nil {
-		t.Fatalf("AddToScheme infrav1alpha1: %v", err)
+	if err := seamcorev1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("AddToScheme seamcorev1alpha1: %v", err)
 	}
 	return s
 }
 
-func newClusterPack(name, namespace, version string) *infrav1alpha1.ClusterPack {
-	return &infrav1alpha1.ClusterPack{
+func newClusterPack(name, namespace, version string) *seamcorev1alpha1.InfrastructureClusterPack {
+	return &seamcorev1alpha1.InfrastructureClusterPack{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       name,
 			Namespace:  namespace,
-			Finalizers: []string{"infra.ontai.dev/clusterpack-cleanup"},
+			Finalizers: []string{"infrastructure.ontai.dev/clusterpack-cleanup"},
 		},
-		Spec: infrav1alpha1.ClusterPackSpec{
+		Spec: seamcorev1alpha1.InfrastructureClusterPackSpec{
 			Version: version,
-			RegistryRef: infrav1alpha1.PackRegistryRef{
+			RegistryRef: seamcorev1alpha1.InfrastructurePackRegistryRef{
 				URL:    "registry.ontai.dev/packs/" + name,
 				Digest: "sha256:abc123",
 			},
@@ -48,7 +49,7 @@ func newClusterPack(name, namespace, version string) *infrav1alpha1.ClusterPack 
 	}
 }
 
-func reconcileCP(t *testing.T, r *controller.ClusterPackReconciler, cp *infrav1alpha1.ClusterPack) ctrl.Result {
+func reconcileCP(t *testing.T, r *controller.ClusterPackReconciler, cp *seamcorev1alpha1.InfrastructureClusterPack) ctrl.Result {
 	t.Helper()
 	result, err := r.Reconcile(context.Background(), ctrl.Request{
 		NamespacedName: types.NamespacedName{Name: cp.Name, Namespace: cp.Namespace},
@@ -66,7 +67,7 @@ func TestClusterPackReconciler_AwaitingSignature(t *testing.T) {
 	s := newClusterPackScheme(t)
 	cp := newClusterPack("my-pack", "infra-system", "v1.0.0")
 	fakeClient := fake.NewClientBuilder().WithScheme(s).WithObjects(cp).
-		WithStatusSubresource(&infrav1alpha1.ClusterPack{}).Build()
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructureClusterPack{}).Build()
 	r := &controller.ClusterPackReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
@@ -80,12 +81,12 @@ func TestClusterPackReconciler_AwaitingSignature(t *testing.T) {
 	}
 
 	// Re-fetch to check status.
-	updated := &infrav1alpha1.ClusterPack{}
+	updated := &seamcorev1alpha1.InfrastructureClusterPack{}
 	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(cp), updated); err != nil {
 		t.Fatalf("get updated ClusterPack: %v", err)
 	}
 
-	sigPendingCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypeClusterPackSignaturePending)
+	sigPendingCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypeClusterPackSignaturePending)
 	if sigPendingCond == nil {
 		t.Fatal("expected SignaturePending condition to be set")
 	}
@@ -93,7 +94,7 @@ func TestClusterPackReconciler_AwaitingSignature(t *testing.T) {
 		t.Errorf("expected SignaturePending=True, got %v", sigPendingCond.Status)
 	}
 
-	availCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypeClusterPackAvailable)
+	availCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypeClusterPackAvailable)
 	if availCond == nil {
 		t.Fatal("expected Available condition to be set")
 	}
@@ -113,7 +114,7 @@ func TestClusterPackReconciler_SignedTransitionsToAvailable(t *testing.T) {
 		"infra.ontai.dev/spec-checksum-snapshot": cp.Spec.Checksum + "|" + cp.Spec.RegistryRef.URL + "|" + cp.Spec.RegistryRef.Digest + "|" + cp.Spec.Version,
 	}
 	fakeClient := fake.NewClientBuilder().WithScheme(s).WithObjects(cp).
-		WithStatusSubresource(&infrav1alpha1.ClusterPack{}).Build()
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructureClusterPack{}).Build()
 	r := &controller.ClusterPackReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
@@ -126,7 +127,7 @@ func TestClusterPackReconciler_SignedTransitionsToAvailable(t *testing.T) {
 		t.Errorf("expected no requeue on signed pack, got %+v", result)
 	}
 
-	updated := &infrav1alpha1.ClusterPack{}
+	updated := &seamcorev1alpha1.InfrastructureClusterPack{}
 	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(cp), updated); err != nil {
 		t.Fatalf("get updated ClusterPack: %v", err)
 	}
@@ -138,7 +139,7 @@ func TestClusterPackReconciler_SignedTransitionsToAvailable(t *testing.T) {
 		t.Errorf("expected PackSignature=base64sig==, got %q", updated.Status.PackSignature)
 	}
 
-	availCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypeClusterPackAvailable)
+	availCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypeClusterPackAvailable)
 	if availCond == nil {
 		t.Fatal("expected Available condition")
 	}
@@ -153,7 +154,7 @@ func TestClusterPackReconciler_LineageSyncedInitialized(t *testing.T) {
 	s := newClusterPackScheme(t)
 	cp := newClusterPack("lineage-pack", "infra-system", "v1.0.0")
 	fakeClient := fake.NewClientBuilder().WithScheme(s).WithObjects(cp).
-		WithStatusSubresource(&infrav1alpha1.ClusterPack{}).Build()
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructureClusterPack{}).Build()
 	r := &controller.ClusterPackReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
@@ -162,20 +163,20 @@ func TestClusterPackReconciler_LineageSyncedInitialized(t *testing.T) {
 
 	reconcileCP(t, r, cp)
 
-	updated := &infrav1alpha1.ClusterPack{}
+	updated := &seamcorev1alpha1.InfrastructureClusterPack{}
 	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(cp), updated); err != nil {
 		t.Fatalf("get updated ClusterPack: %v", err)
 	}
 
-	lineageCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypeLineageSynced)
+	lineageCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypeLineageSynced)
 	if lineageCond == nil {
 		t.Fatal("expected LineageSynced condition")
 	}
 	if lineageCond.Status != metav1.ConditionFalse {
 		t.Errorf("expected LineageSynced=False, got %v", lineageCond.Status)
 	}
-	if lineageCond.Reason != infrav1alpha1.ReasonLineageControllerAbsent {
-		t.Errorf("expected reason %q, got %q", infrav1alpha1.ReasonLineageControllerAbsent, lineageCond.Reason)
+	if lineageCond.Reason != conditions.ReasonLineageControllerAbsent {
+		t.Errorf("expected reason %q, got %q", conditions.ReasonLineageControllerAbsent, lineageCond.Reason)
 	}
 }
 
@@ -189,7 +190,7 @@ func TestClusterPackReconciler_ImmutabilityViolation(t *testing.T) {
 		"infra.ontai.dev/spec-checksum-snapshot": "sha256:different|old-url|old-digest|v0.9.0",
 	}
 	fakeClient := fake.NewClientBuilder().WithScheme(s).WithObjects(cp).
-		WithStatusSubresource(&infrav1alpha1.ClusterPack{}).Build()
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructureClusterPack{}).Build()
 	r := &controller.ClusterPackReconciler{
 		Client:   fakeClient,
 		Scheme:   s,
@@ -202,12 +203,12 @@ func TestClusterPackReconciler_ImmutabilityViolation(t *testing.T) {
 		t.Errorf("expected no requeue on immutability violation, got %+v", result)
 	}
 
-	updated := &infrav1alpha1.ClusterPack{}
+	updated := &seamcorev1alpha1.InfrastructureClusterPack{}
 	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(cp), updated); err != nil {
 		t.Fatalf("get updated ClusterPack: %v", err)
 	}
 
-	immCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypeClusterPackImmutabilityViolation)
+	immCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypeClusterPackImmutabilityViolation)
 	if immCond == nil {
 		t.Fatal("expected ImmutabilityViolation condition")
 	}
@@ -227,15 +228,15 @@ func TestClusterPackReconciler_RevokedNoRequeue(t *testing.T) {
 	}
 	cp.Status.Conditions = []metav1.Condition{
 		{
-			Type:               infrav1alpha1.ConditionTypeClusterPackRevoked,
+			Type:               conditions.ConditionTypeClusterPackRevoked,
 			Status:             metav1.ConditionTrue,
-			Reason:             infrav1alpha1.ReasonPackRevoked,
+			Reason:             conditions.ReasonPackRevoked,
 			Message:            "revoked",
 			LastTransitionTime: metav1.Now(),
 		},
 	}
 	fakeClient := fake.NewClientBuilder().WithScheme(s).WithObjects(cp).
-		WithStatusSubresource(&infrav1alpha1.ClusterPack{}).Build()
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructureClusterPack{}).Build()
 	r := &controller.ClusterPackReconciler{
 		Client:   fakeClient,
 		Scheme:   s,

@@ -62,6 +62,24 @@ spec:
               PackInstanceSpec defines the desired state of a PackInstance.
               wrapper-schema.md §3.
             properties:
+              chartName:
+                description: |-
+                  ChartName is the name of the Helm chart delivered.
+                  Copied from ClusterPack.spec.chartName at creation time.
+                  Absent for kustomize and raw category packs. Decision B, T-04 schema.
+                type: string
+              chartURL:
+                description: |-
+                  ChartURL is the URL of the Helm chart repository.
+                  Copied from ClusterPack.spec.chartURL at creation time.
+                  Absent for kustomize and raw category packs. Decision B, T-04 schema.
+                type: string
+              chartVersion:
+                description: |-
+                  ChartVersion is the version of the Helm chart delivered for this PackInstance.
+                  Copied from ClusterPack.spec.chartVersion at creation time.
+                  Absent for kustomize and raw category packs. Decision B, T-04 schema.
+                type: string
               clusterPackRef:
                 description: |-
                   ClusterPackRef identifies the ClusterPack that was delivered to produce
@@ -91,6 +109,12 @@ spec:
                 items:
                   type: string
                 type: array
+              helmVersion:
+                description: |-
+                  HelmVersion is the version of the Helm SDK used to render the ClusterPack.
+                  Copied from ClusterPack.spec.helmVersion at creation time.
+                  Absent for kustomize and raw category packs. Decision B, T-04 schema.
+                type: string
               lineage:
                 description: |-
                   Lineage is the sealed causal chain record for this root declaration.

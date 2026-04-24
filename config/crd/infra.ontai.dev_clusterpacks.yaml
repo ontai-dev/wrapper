@@ -69,11 +69,38 @@ spec:
                   same base pack supersedes an older one in-place rather than creating a parallel
                   PackInstance. Schema-first per Decision 11.
                 type: string
+              chartName:
+                description: |-
+                  ChartName is the name of the Helm chart (e.g., "nginx-ingress").
+                  Populated by the Compiler for helm category packs. Absent for kustomize and raw.
+                  Decision B, T-04 schema.
+                type: string
+              chartURL:
+                description: |-
+                  ChartURL is the URL of the Helm chart repository used to compile this ClusterPack.
+                  Populated by the Compiler for helm category packs. Absent for kustomize and raw.
+                  Decision B, T-04 schema.
+                type: string
+              chartVersion:
+                description: |-
+                  ChartVersion is the version of the Helm chart used to compile this ClusterPack.
+                  Populated by the Compiler for helm category packs. Absent for kustomize and raw.
+                  Decision B, T-04 schema.
+                type: string
               checksum:
                 description: |-
                   Checksum is the SHA256 checksum of the pack artifact, used for integrity
                   verification before deployment. Immutable after creation.
                 minLength: 1
+                type: string
+              clusterScopedDigest:
+                description: |-
+                  ClusterScopedDigest is the OCI digest of the cluster-scoped non-RBAC layer.
+                  Contains MutatingWebhookConfiguration, ValidatingWebhookConfiguration,
+                  CustomResourceDefinition, APIService, PriorityClass, StorageClass,
+                  IngressClass, ClusterIssuer, and similar cluster-scoped resources.
+                  Applied after guardian RBAC intake and before workload manifests.
+                  Absent when the chart has no cluster-scoped resources. wrapper-schema.md §4.
                 type: string
               executionOrder:
                 description: |-
@@ -104,6 +131,14 @@ spec:
                   - name
                   type: object
                 type: array
+              helmVersion:
+                description: |-
+                  HelmVersion is the version of the Helm SDK used to render this ClusterPack.
+                  Records the helm.sh/helm/v3 module version embedded in the Compiler binary.
+                  Ensures rendering reproducibility across SDK versions.
+                  Populated by the Compiler for helm category packs. Absent for kustomize and raw.
+                  Decision B, T-04 schema.
+                type: string
               lifecyclePolicies:
                 description: LifecyclePolicies controls artifact retention behavior.
                 properties:

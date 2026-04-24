@@ -31,7 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	infrav1alpha1 "github.com/ontai-dev/wrapper/api/v1alpha1"
+	seamcorev1alpha1 "github.com/ontai-dev/seam-core/api/v1alpha1"
 	"github.com/ontai-dev/wrapper/internal/controller"
 )
 
@@ -51,7 +51,7 @@ func TestMain(m *testing.M) {
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-	utilruntime.Must(infrav1alpha1.AddToScheme(scheme))
+	utilruntime.Must(seamcorev1alpha1.AddToScheme(scheme))
 
 	crdPath := filepath.Join("..", "..", "config", "crd")
 

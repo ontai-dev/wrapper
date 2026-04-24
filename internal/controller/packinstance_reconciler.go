@@ -20,7 +20,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	infrav1alpha1 "github.com/ontai-dev/wrapper/api/v1alpha1"
+	seamcorev1alpha1 "github.com/ontai-dev/seam-core/api/v1alpha1"
+	"github.com/ontai-dev/seam-core/pkg/conditions"
 )
 
 // driftCheckInterval is how often the reconciler re-reads PackReceipt drift status
@@ -70,7 +71,7 @@ func (r *PackInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	logger := log.FromContext(ctx)
 
 	// Step A — Fetch the PackInstance CR.
-	pi := &infrav1alpha1.PackInstance{}
+	pi := &seamcorev1alpha1.InfrastructurePackInstance{}
 	if err := r.Client.Get(ctx, req.NamespacedName, pi); err != nil {
 		if apierrors.IsNotFound(err) {
 			logger.Info("PackInstance not found — likely deleted, ignoring",
@@ -124,12 +125,12 @@ func (r *PackInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	pi.Status.ObservedGeneration = pi.Generation
 
 	// Step D — Initialize LineageSynced on first observation (one-time write).
-	if infrav1alpha1.FindCondition(pi.Status.Conditions, infrav1alpha1.ConditionTypeLineageSynced) == nil {
-		infrav1alpha1.SetCondition(
+	if conditions.FindCondition(pi.Status.Conditions, conditions.ConditionTypeLineageSynced) == nil {
+		conditions.SetCondition(
 			&pi.Status.Conditions,
-			infrav1alpha1.ConditionTypeLineageSynced,
+			conditions.ConditionTypeLineageSynced,
 			metav1.ConditionFalse,
-			infrav1alpha1.ReasonLineageControllerAbsent,
+			conditions.ReasonLineageControllerAbsent,
 			"InfrastructureLineageController is not yet deployed.",
 			pi.Generation,
 		)
@@ -145,11 +146,11 @@ func (r *PackInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, fmt.Errorf("failed to find succeeded PackExecution: %w", err)
 	}
 	if succeededPE != nil {
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&pi.Status.Conditions,
-			infrav1alpha1.ConditionTypePackInstanceReady,
+			conditions.ConditionTypePackInstanceReady,
 			metav1.ConditionTrue,
-			infrav1alpha1.ReasonPackDelivered,
+			conditions.ReasonPackDelivered,
 			fmt.Sprintf("Pack %s %s successfully delivered to %s.",
 				succeededPE.Spec.ClusterPackRef.Name,
 				succeededPE.Spec.ClusterPackRef.Version,
@@ -160,11 +161,11 @@ func (r *PackInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 	// No succeeded PackExecution — pack not yet delivered. Fall through to
 	// PackReceipt-based drift detection which handles the post-receipt lifecycle.
-	infrav1alpha1.SetCondition(
+	conditions.SetCondition(
 		&pi.Status.Conditions,
-		infrav1alpha1.ConditionTypePackInstanceReady,
+		conditions.ConditionTypePackInstanceReady,
 		metav1.ConditionFalse,
-		infrav1alpha1.ReasonAwaitingDelivery,
+		conditions.ReasonAwaitingDelivery,
 		"No succeeded PackExecution found for this pack and cluster.",
 		pi.Generation,
 	)
@@ -179,19 +180,19 @@ func (r *PackInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 	if receipt == nil {
 		// PackReceipt not yet written by conductor — not an error.
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&pi.Status.Conditions,
-			infrav1alpha1.ConditionTypePackInstanceReady,
+			conditions.ConditionTypePackInstanceReady,
 			metav1.ConditionFalse,
-			infrav1alpha1.ReasonPackReceiptNotFound,
+			conditions.ReasonPackReceiptNotFound,
 			"PackReceipt not yet written by conductor agent on target cluster.",
 			pi.Generation,
 		)
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&pi.Status.Conditions,
-			infrav1alpha1.ConditionTypePackInstanceProgressing,
+			conditions.ConditionTypePackInstanceProgressing,
 			metav1.ConditionTrue,
-			infrav1alpha1.ReasonPackReceiptNotFound,
+			conditions.ReasonPackReceiptNotFound,
 			"Waiting for conductor to write PackReceipt.",
 			pi.Generation,
 		)
@@ -208,19 +209,19 @@ func (r *PackInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 				"Security violation — all pack operations on this cluster are blocked.",
 			pi.Spec.ClusterPackRef, pi.Spec.TargetClusterRef,
 		)
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&pi.Status.Conditions,
-			infrav1alpha1.ConditionTypePackInstanceSecurityViolation,
+			conditions.ConditionTypePackInstanceSecurityViolation,
 			metav1.ConditionTrue,
-			infrav1alpha1.ReasonSignatureVerifyFailed,
+			conditions.ReasonSignatureVerifyFailed,
 			msg,
 			pi.Generation,
 		)
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&pi.Status.Conditions,
-			infrav1alpha1.ConditionTypePackInstanceReady,
+			conditions.ConditionTypePackInstanceReady,
 			metav1.ConditionFalse,
-			infrav1alpha1.ReasonSignatureVerifyFailed,
+			conditions.ReasonSignatureVerifyFailed,
 			"SecurityViolation: signature verification failed.",
 			pi.Generation,
 		)
@@ -232,11 +233,11 @@ func (r *PackInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{RequeueAfter: driftCheckInterval}, nil
 	}
 	// Signature verified — clear any prior SecurityViolation.
-	infrav1alpha1.SetCondition(
+	conditions.SetCondition(
 		&pi.Status.Conditions,
-		infrav1alpha1.ConditionTypePackInstanceSecurityViolation,
+		conditions.ConditionTypePackInstanceSecurityViolation,
 		metav1.ConditionFalse,
-		infrav1alpha1.ReasonSecurityViolationCleared,
+		conditions.ReasonSecurityViolationCleared,
 		"Signature verification passed.",
 		pi.Generation,
 	)
@@ -248,22 +249,22 @@ func (r *PackInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	switch driftStatus {
 	case "Drifted":
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&pi.Status.Conditions,
-			infrav1alpha1.ConditionTypePackInstanceDrifted,
+			conditions.ConditionTypePackInstanceDrifted,
 			metav1.ConditionTrue,
-			infrav1alpha1.ReasonDriftDetected,
+			conditions.ReasonDriftDetected,
 			fmt.Sprintf("Conductor drift detection reports drift: %s", driftSummary),
 			pi.Generation,
 		)
 		r.Recorder.Eventf(pi, nil, corev1.EventTypeWarning, "DriftDetected", "DriftDetected",
 			"Pack drift detected on cluster %q: %s", pi.Spec.TargetClusterRef, driftSummary)
 	default:
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&pi.Status.Conditions,
-			infrav1alpha1.ConditionTypePackInstanceDrifted,
+			conditions.ConditionTypePackInstanceDrifted,
 			metav1.ConditionFalse,
-			infrav1alpha1.ReasonNoDrift,
+			conditions.ReasonNoDrift,
 			"No drift detected.",
 			pi.Generation,
 		)
@@ -276,61 +277,61 @@ func (r *PackInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 	if blocked {
 		msg := fmt.Sprintf("Dependency PackInstance %q is drifted and DependencyPolicy is Block.", blockedBy)
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&pi.Status.Conditions,
-			infrav1alpha1.ConditionTypePackInstanceDependencyBlocked,
+			conditions.ConditionTypePackInstanceDependencyBlocked,
 			metav1.ConditionTrue,
-			infrav1alpha1.ReasonDependencyDrifted,
+			conditions.ReasonDependencyDrifted,
 			msg,
 			pi.Generation,
 		)
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&pi.Status.Conditions,
-			infrav1alpha1.ConditionTypePackInstanceReady,
+			conditions.ConditionTypePackInstanceReady,
 			metav1.ConditionFalse,
-			infrav1alpha1.ReasonDependencyDrifted,
+			conditions.ReasonDependencyDrifted,
 			msg,
 			pi.Generation,
 		)
 		r.Recorder.Eventf(pi, nil, corev1.EventTypeWarning, "DependencyBlocked", "DependencyBlocked", msg)
 		return ctrl.Result{RequeueAfter: driftCheckInterval}, nil
 	}
-	infrav1alpha1.SetCondition(
+	conditions.SetCondition(
 		&pi.Status.Conditions,
-		infrav1alpha1.ConditionTypePackInstanceDependencyBlocked,
+		conditions.ConditionTypePackInstanceDependencyBlocked,
 		metav1.ConditionFalse,
-		infrav1alpha1.ReasonDependencyDrifted,
+		conditions.ReasonDependencyDrifted,
 		"No blocking dependency drift.",
 		pi.Generation,
 	)
 
 	// Step I — Set Ready condition based on drift state.
-	driftedCond := infrav1alpha1.FindCondition(pi.Status.Conditions, infrav1alpha1.ConditionTypePackInstanceDrifted)
+	driftedCond := conditions.FindCondition(pi.Status.Conditions, conditions.ConditionTypePackInstanceDrifted)
 	if driftedCond != nil && driftedCond.Status == metav1.ConditionTrue {
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&pi.Status.Conditions,
-			infrav1alpha1.ConditionTypePackInstanceReady,
+			conditions.ConditionTypePackInstanceReady,
 			metav1.ConditionFalse,
-			infrav1alpha1.ReasonDriftDetected,
+			conditions.ReasonDriftDetected,
 			"Pack is drifted.",
 			pi.Generation,
 		)
 	} else {
 		now := metav1.Now()
 		pi.Status.DeliveredAt = &now
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&pi.Status.Conditions,
-			infrav1alpha1.ConditionTypePackInstanceReady,
+			conditions.ConditionTypePackInstanceReady,
 			metav1.ConditionTrue,
-			infrav1alpha1.ReasonPackReceiptReady,
+			conditions.ReasonPackReceiptReady,
 			"Pack is delivered and in sync.",
 			pi.Generation,
 		)
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&pi.Status.Conditions,
-			infrav1alpha1.ConditionTypePackInstanceProgressing,
+			conditions.ConditionTypePackInstanceProgressing,
 			metav1.ConditionFalse,
-			infrav1alpha1.ReasonPackDelivered,
+			conditions.ReasonPackDelivered,
 			"Pack delivery confirmed.",
 			pi.Generation,
 		)
@@ -346,8 +347,8 @@ func (r *PackInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 func (r *PackInstanceReconciler) findSucceededPackExecution(
 	ctx context.Context,
 	namespace, clusterPackRef, targetClusterRef string,
-) (*infrav1alpha1.PackExecution, error) {
-	list := &infrav1alpha1.PackExecutionList{}
+) (*seamcorev1alpha1.InfrastructurePackExecution, error) {
+	list := &seamcorev1alpha1.InfrastructurePackExecutionList{}
 	if err := r.Client.List(ctx, list, client.InNamespace(namespace)); err != nil {
 		return nil, fmt.Errorf("list PackExecutions: %w", err)
 	}
@@ -359,7 +360,7 @@ func (r *PackInstanceReconciler) findSucceededPackExecution(
 		if pe.Spec.TargetClusterRef != targetClusterRef {
 			continue
 		}
-		succeededCond := infrav1alpha1.FindCondition(pe.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionSucceeded)
+		succeededCond := conditions.FindCondition(pe.Status.Conditions, conditions.ConditionTypePackExecutionSucceeded)
 		if succeededCond != nil && succeededCond.Status == metav1.ConditionTrue {
 			return pe, nil
 		}
@@ -388,27 +389,27 @@ func (r *PackInstanceReconciler) getPackReceipt(ctx context.Context, name, names
 
 // checkDependencyDrift checks the DependsOn list for any PackInstance that is
 // drifted and the DependencyPolicy is Block. Returns (blocked, blockedByName, err).
-func (r *PackInstanceReconciler) checkDependencyDrift(ctx context.Context, pi *infrav1alpha1.PackInstance) (bool, string, error) {
+func (r *PackInstanceReconciler) checkDependencyDrift(ctx context.Context, pi *seamcorev1alpha1.InfrastructurePackInstance) (bool, string, error) {
 	if len(pi.Spec.DependsOn) == 0 {
 		return false, "", nil
 	}
-	policy := infrav1alpha1.DriftPolicyWarn
+	policy := seamcorev1alpha1.InfrastructureDriftPolicyWarn
 	if pi.Spec.DependencyPolicy != nil {
 		policy = pi.Spec.DependencyPolicy.OnDrift
 	}
-	if policy != infrav1alpha1.DriftPolicyBlock {
+	if policy != seamcorev1alpha1.InfrastructureDriftPolicyBlock {
 		// Warn and Ignore policies do not block.
 		return false, "", nil
 	}
 	for _, depName := range pi.Spec.DependsOn {
-		dep := &infrav1alpha1.PackInstance{}
+		dep := &seamcorev1alpha1.InfrastructurePackInstance{}
 		if err := r.Client.Get(ctx, client.ObjectKey{Name: depName, Namespace: pi.Namespace}, dep); err != nil {
 			if apierrors.IsNotFound(err) {
 				continue
 			}
 			return false, "", fmt.Errorf("failed to get dependency PackInstance %s: %w", depName, err)
 		}
-		driftedCond := infrav1alpha1.FindCondition(dep.Status.Conditions, infrav1alpha1.ConditionTypePackInstanceDrifted)
+		driftedCond := conditions.FindCondition(dep.Status.Conditions, conditions.ConditionTypePackInstanceDrifted)
 		if driftedCond != nil && driftedCond.Status == metav1.ConditionTrue {
 			return true, depName, nil
 		}
@@ -421,7 +422,7 @@ func (r *PackInstanceReconciler) checkDependencyDrift(ctx context.Context, pi *i
 // Secret in the seam-tenant-{targetCluster} namespace. Errors are logged per resource
 // but do not abort the cleanup. Returns an error only if the kubeconfig is unreadable.
 // INV-006: no Jobs on the delete path. wrapper-schema.md §3, Decision 11.
-func (r *PackInstanceReconciler) cleanupDeployedResources(ctx context.Context, pi *infrav1alpha1.PackInstance) error {
+func (r *PackInstanceReconciler) cleanupDeployedResources(ctx context.Context, pi *seamcorev1alpha1.InfrastructurePackInstance) error {
 	logger := log.FromContext(ctx)
 	if len(pi.Status.DeployedResources) == 0 {
 		return nil
@@ -516,6 +517,6 @@ func piIsVowel(c byte) bool {
 // SetupWithManager registers PackInstanceReconciler as the controller for PackInstance.
 func (r *PackInstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&infrav1alpha1.PackInstance{}).
+		For(&seamcorev1alpha1.InfrastructurePackInstance{}).
 		Complete(r)
 }

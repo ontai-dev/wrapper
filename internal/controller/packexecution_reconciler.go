@@ -25,8 +25,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	seamv1alpha1 "github.com/ontai-dev/seam-core/api/v1alpha1"
+	"github.com/ontai-dev/seam-core/pkg/conditions"
 	"github.com/ontai-dev/seam-core/pkg/lineage"
-	infrav1alpha1 "github.com/ontai-dev/wrapper/api/v1alpha1"
 )
 
 const (
@@ -113,7 +113,7 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	logger := log.FromContext(ctx)
 
 	// Step A — Fetch the PackExecution CR.
-	pe := &infrav1alpha1.PackExecution{}
+	pe := &seamv1alpha1.InfrastructurePackExecution{}
 	if err := r.Client.Get(ctx, req.NamespacedName, pe); err != nil {
 		if apierrors.IsNotFound(err) {
 			logger.Info("PackExecution not found — likely deleted, ignoring",
@@ -138,25 +138,25 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	pe.Status.ObservedGeneration = pe.Generation
 
 	// Step D — Initialize LineageSynced on first observation (one-time write).
-	if infrav1alpha1.FindCondition(pe.Status.Conditions, infrav1alpha1.ConditionTypeLineageSynced) == nil {
-		infrav1alpha1.SetCondition(
+	if conditions.FindCondition(pe.Status.Conditions, conditions.ConditionTypeLineageSynced) == nil {
+		conditions.SetCondition(
 			&pe.Status.Conditions,
-			infrav1alpha1.ConditionTypeLineageSynced,
+			conditions.ConditionTypeLineageSynced,
 			metav1.ConditionFalse,
-			infrav1alpha1.ReasonLineageControllerAbsent,
+			conditions.ReasonLineageControllerAbsent,
 			"InfrastructureLineageController is not yet deployed.",
 			pe.Generation,
 		)
 	}
 
 	// Step E — Terminal state guard: Succeeded.
-	succeededCond := infrav1alpha1.FindCondition(pe.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionSucceeded)
+	succeededCond := conditions.FindCondition(pe.Status.Conditions, conditions.ConditionTypePackExecutionSucceeded)
 	if succeededCond != nil && succeededCond.Status == metav1.ConditionTrue {
 		return ctrl.Result{}, nil
 	}
 
 	// Step F — Terminal state guard: PackRevoked (no requeue).
-	revokedCond := infrav1alpha1.FindCondition(pe.Status.Conditions, infrav1alpha1.ConditionTypePackRevoked)
+	revokedCond := conditions.FindCondition(pe.Status.Conditions, conditions.ConditionTypePackRevoked)
 	if revokedCond != nil && revokedCond.Status == metav1.ConditionTrue {
 		logger.Info("PackExecution blocked — ClusterPack is revoked",
 			"name", pe.Name, "namespace", pe.Namespace)
@@ -176,22 +176,22 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			pe.Spec.TargetClusterRef, err)
 	}
 	if !conductorReady {
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&pe.Status.Conditions,
-			infrav1alpha1.ConditionTypePackExecutionWaiting,
+			conditions.ConditionTypePackExecutionWaiting,
 			metav1.ConditionTrue,
-			infrav1alpha1.ReasonAwaitingConductorReady,
+			conditions.ReasonAwaitingConductorReady,
 			fmt.Sprintf("Conductor agent for cluster %q is not yet ready: "+
 				"RunnerConfig in ont-system has no published capabilities. "+
 				"Waiting for the Conductor Deployment to start and declare its capability manifest.",
 				pe.Spec.TargetClusterRef),
 			pe.Generation,
 		)
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&pe.Status.Conditions,
-			infrav1alpha1.ConditionTypePackExecutionPending,
+			conditions.ConditionTypePackExecutionPending,
 			metav1.ConditionTrue,
-			infrav1alpha1.ReasonGatesClearing,
+			conditions.ReasonGatesClearing,
 			"Waiting for ConductorReady gate (gate 0).",
 			pe.Generation,
 		)
@@ -200,25 +200,25 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{RequeueAfter: gateRequeueInterval}, nil
 	}
 	// Gate 0 cleared — clear the Waiting condition if set.
-	infrav1alpha1.SetCondition(
+	conditions.SetCondition(
 		&pe.Status.Conditions,
-		infrav1alpha1.ConditionTypePackExecutionWaiting,
+		conditions.ConditionTypePackExecutionWaiting,
 		metav1.ConditionFalse,
-		infrav1alpha1.ReasonAwaitingConductorReady,
+		conditions.ReasonAwaitingConductorReady,
 		"ConductorReady gate cleared.",
 		pe.Generation,
 	)
 
 	// Gate 1: Signature gate.
-	cp := &infrav1alpha1.ClusterPack{}
+	cp := &seamv1alpha1.InfrastructureClusterPack{}
 	cpKey := client.ObjectKey{Name: pe.Spec.ClusterPackRef.Name, Namespace: pe.Namespace}
 	if err := r.Client.Get(ctx, cpKey, cp); err != nil {
 		if apierrors.IsNotFound(err) {
-			infrav1alpha1.SetCondition(
+			conditions.SetCondition(
 				&pe.Status.Conditions,
-				infrav1alpha1.ConditionTypePackExecutionPending,
+				conditions.ConditionTypePackExecutionPending,
 				metav1.ConditionTrue,
-				infrav1alpha1.ReasonGatesClearing,
+				conditions.ReasonGatesClearing,
 				fmt.Sprintf("ClusterPack %q not found.", pe.Spec.ClusterPackRef.Name),
 				pe.Generation,
 			)
@@ -247,19 +247,19 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	if !cp.Status.Signed {
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&pe.Status.Conditions,
-			infrav1alpha1.ConditionTypePackSignaturePending,
+			conditions.ConditionTypePackSignaturePending,
 			metav1.ConditionTrue,
-			infrav1alpha1.ReasonAwaitingSignature,
+			conditions.ReasonAwaitingSignature,
 			"ClusterPack has not yet been signed by the conductor signing loop.",
 			pe.Generation,
 		)
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&pe.Status.Conditions,
-			infrav1alpha1.ConditionTypePackExecutionPending,
+			conditions.ConditionTypePackExecutionPending,
 			metav1.ConditionTrue,
-			infrav1alpha1.ReasonAwaitingSignature,
+			conditions.ReasonAwaitingSignature,
 			"Waiting for ClusterPack signature.",
 			pe.Generation,
 		)
@@ -268,24 +268,24 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{RequeueAfter: signatureRequeueInterval}, nil
 	}
 	// Signature cleared — clear the SignaturePending condition if set.
-	infrav1alpha1.SetCondition(
+	conditions.SetCondition(
 		&pe.Status.Conditions,
-		infrav1alpha1.ConditionTypePackSignaturePending,
+		conditions.ConditionTypePackSignaturePending,
 		metav1.ConditionFalse,
-		infrav1alpha1.ReasonPackSigned,
+		conditions.ReasonPackSigned,
 		"ClusterPack is signed.",
 		pe.Generation,
 	)
 
 	// Gate 2: Revocation gate.
-	cpRevokedCond := infrav1alpha1.FindCondition(cp.Status.Conditions, infrav1alpha1.ConditionTypeClusterPackRevoked)
+	cpRevokedCond := conditions.FindCondition(cp.Status.Conditions, conditions.ConditionTypeClusterPackRevoked)
 	if cpRevokedCond != nil && cpRevokedCond.Status == metav1.ConditionTrue {
 		msg := fmt.Sprintf("ClusterPack %q has been revoked. Human intervention required.", cp.Name)
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&pe.Status.Conditions,
-			infrav1alpha1.ConditionTypePackRevoked,
+			conditions.ConditionTypePackRevoked,
 			metav1.ConditionTrue,
-			infrav1alpha1.ReasonClusterPackRevoked,
+			conditions.ReasonClusterPackRevoked,
 			msg,
 			pe.Generation,
 		)
@@ -302,19 +302,19 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, fmt.Errorf("failed to check PermissionSnapshot: %w", err)
 	}
 	if !psReady {
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&pe.Status.Conditions,
-			infrav1alpha1.ConditionTypePermissionSnapshotOutOfSync,
+			conditions.ConditionTypePermissionSnapshotOutOfSync,
 			metav1.ConditionTrue,
-			infrav1alpha1.ReasonSnapshotOutOfSync,
+			conditions.ReasonSnapshotOutOfSync,
 			"PermissionSnapshot for target cluster is not current.",
 			pe.Generation,
 		)
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&pe.Status.Conditions,
-			infrav1alpha1.ConditionTypePackExecutionPending,
+			conditions.ConditionTypePackExecutionPending,
 			metav1.ConditionTrue,
-			infrav1alpha1.ReasonGatesClearing,
+			conditions.ReasonGatesClearing,
 			"Waiting for PermissionSnapshot gate.",
 			pe.Generation,
 		)
@@ -322,11 +322,11 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			"name", pe.Name)
 		return ctrl.Result{RequeueAfter: gateRequeueInterval}, nil
 	}
-	infrav1alpha1.SetCondition(
+	conditions.SetCondition(
 		&pe.Status.Conditions,
-		infrav1alpha1.ConditionTypePermissionSnapshotOutOfSync,
+		conditions.ConditionTypePermissionSnapshotOutOfSync,
 		metav1.ConditionFalse,
-		infrav1alpha1.ReasonSnapshotOutOfSync,
+		conditions.ReasonSnapshotOutOfSync,
 		"PermissionSnapshot is current.",
 		pe.Generation,
 	)
@@ -337,19 +337,19 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, fmt.Errorf("failed to check RBACProfile: %w", err)
 	}
 	if !rbacReady {
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&pe.Status.Conditions,
-			infrav1alpha1.ConditionTypeRBACProfileNotProvisioned,
+			conditions.ConditionTypeRBACProfileNotProvisioned,
 			metav1.ConditionTrue,
-			infrav1alpha1.ReasonRBACProfileNotReady,
+			conditions.ReasonRBACProfileNotReady,
 			"RBACProfile has not reached provisioned=true.",
 			pe.Generation,
 		)
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&pe.Status.Conditions,
-			infrav1alpha1.ConditionTypePackExecutionPending,
+			conditions.ConditionTypePackExecutionPending,
 			metav1.ConditionTrue,
-			infrav1alpha1.ReasonGatesClearing,
+			conditions.ReasonGatesClearing,
 			"Waiting for RBACProfile gate.",
 			pe.Generation,
 		)
@@ -357,21 +357,21 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			"name", pe.Name)
 		return ctrl.Result{RequeueAfter: gateRequeueInterval}, nil
 	}
-	infrav1alpha1.SetCondition(
+	conditions.SetCondition(
 		&pe.Status.Conditions,
-		infrav1alpha1.ConditionTypeRBACProfileNotProvisioned,
+		conditions.ConditionTypeRBACProfileNotProvisioned,
 		metav1.ConditionFalse,
-		infrav1alpha1.ReasonRBACProfileNotReady,
+		conditions.ReasonRBACProfileNotReady,
 		"RBACProfile is provisioned.",
 		pe.Generation,
 	)
 
 	// All gates cleared.
-	infrav1alpha1.SetCondition(
+	conditions.SetCondition(
 		&pe.Status.Conditions,
-		infrav1alpha1.ConditionTypePackExecutionPending,
+		conditions.ConditionTypePackExecutionPending,
 		metav1.ConditionFalse,
-		infrav1alpha1.ReasonJobSubmitted,
+		conditions.ReasonJobSubmitted,
 		"All gates cleared.",
 		pe.Generation,
 	)
@@ -416,7 +416,7 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			if !alreadyOwned {
 				porPatch := client.MergeFrom(resultPOR.DeepCopy())
 				resultPOR.OwnerReferences = append(resultPOR.OwnerReferences, metav1.OwnerReference{
-					APIVersion:         infrav1alpha1.GroupVersion.String(),
+					APIVersion:         seamv1alpha1.GroupVersion.String(),
 					Kind:               "PackExecution",
 					Name:               pe.Name,
 					UID:                pe.UID,
@@ -439,17 +439,17 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				if porFailureReason != nil {
 					failMsg = fmt.Sprintf("step %q failed: %s", porFailureReason.FailedStep, porFailureReason.Reason)
 				}
-				infrav1alpha1.SetCondition(
+				conditions.SetCondition(
 					&pe.Status.Conditions,
-					infrav1alpha1.ConditionTypePackExecutionRunning,
+					conditions.ConditionTypePackExecutionRunning,
 					metav1.ConditionFalse,
-					infrav1alpha1.ReasonJobSucceeded,
+					conditions.ReasonJobSucceeded,
 					"pack-deploy Job completed.",
 					pe.Generation,
 				)
-				infrav1alpha1.SetCondition(
+				conditions.SetCondition(
 					&pe.Status.Conditions,
-					infrav1alpha1.ConditionTypePackExecutionSucceeded,
+					conditions.ConditionTypePackExecutionSucceeded,
 					metav1.ConditionFalse,
 					"CapabilityFailed",
 					failMsg,
@@ -466,19 +466,19 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 					}(),
 				)
 			} else {
-				infrav1alpha1.SetCondition(
+				conditions.SetCondition(
 					&pe.Status.Conditions,
-					infrav1alpha1.ConditionTypePackExecutionRunning,
+					conditions.ConditionTypePackExecutionRunning,
 					metav1.ConditionFalse,
-					infrav1alpha1.ReasonJobSucceeded,
+					conditions.ReasonJobSucceeded,
 					"pack-deploy Job completed successfully.",
 					pe.Generation,
 				)
-				infrav1alpha1.SetCondition(
+				conditions.SetCondition(
 					&pe.Status.Conditions,
-					infrav1alpha1.ConditionTypePackExecutionSucceeded,
+					conditions.ConditionTypePackExecutionSucceeded,
 					metav1.ConditionTrue,
-					infrav1alpha1.ReasonJobSucceeded,
+					conditions.ReasonJobSucceeded,
 					"pack-deploy Job completed and PackOperationResult written.",
 					pe.Generation,
 				)
@@ -512,7 +512,7 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			// Determine upgradeDirection by comparing existing PackInstance version.
 			upgradeDir := packUpgradeDirection(ctx, r.Client, piName, piNamespace, cp.Spec.Version)
 
-			pi := &infrav1alpha1.PackInstance{
+			pi := &seamv1alpha1.InfrastructurePackInstance{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      piName,
 					Namespace: piNamespace,
@@ -521,7 +521,7 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 						"platform.ontai.dev/cluster":  pe.Spec.TargetClusterRef,
 					},
 					OwnerReferences: []metav1.OwnerReference{{
-						APIVersion:         infrav1alpha1.GroupVersion.String(),
+						APIVersion:         seamv1alpha1.GroupVersion.String(),
 						Kind:               "PackExecution",
 						Name:               pe.Name,
 						UID:                pe.UID,
@@ -529,7 +529,7 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 						BlockOwnerDeletion: boolPtr(true),
 					}},
 				},
-				Spec: infrav1alpha1.PackInstanceSpec{
+				Spec: seamv1alpha1.InfrastructurePackInstanceSpec{
 					ClusterPackRef:   pe.Spec.ClusterPackRef.Name,
 					Version:          cp.Spec.Version, // WS6: carry version for DSNSReconciler
 					TargetClusterRef: pe.Spec.TargetClusterRef,
@@ -544,7 +544,7 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				}
 				// PackInstance already exists (basePackName supersession path).
 				// Update spec to reflect the new ClusterPack version.
-				existing := &infrav1alpha1.PackInstance{}
+				existing := &seamv1alpha1.InfrastructurePackInstance{}
 				if getErr := r.Client.Get(ctx, client.ObjectKey{Name: piName, Namespace: piNamespace}, existing); getErr != nil {
 					return ctrl.Result{}, fmt.Errorf("get existing PackInstance %s: %w", piName, getErr)
 				}
@@ -561,16 +561,16 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			// Write DeployedResources and UpgradeDirection to PackInstance status.
 			// DeployedResources enables deletion cleanup (INV-006: no Jobs on delete path).
 			// UpgradeDirection enables rollback tracking. wrapper-schema.md §3, Decision 11.
-			piStatus := &infrav1alpha1.PackInstance{}
+			piStatus := &seamv1alpha1.InfrastructurePackInstance{}
 			piKey := client.ObjectKey{Name: piName, Namespace: piNamespace}
 			if getErr := r.Client.Get(ctx, piKey, piStatus); getErr == nil {
 				piPatch := client.MergeFrom(piStatus.DeepCopy())
 				// Replace DeployedResources (not append) to reflect the current deployment.
 				// On version supersession the previous resource list is replaced with
 				// the new one so the deletion handler cleans up the correct resources.
-				newRefs := make([]infrav1alpha1.DeployedResourceRef, 0, len(porDeployedResources))
+				newRefs := make([]seamv1alpha1.InfrastructureDeployedResourceRef, 0, len(porDeployedResources))
 				for _, dr := range porDeployedResources {
-					newRefs = append(newRefs, infrav1alpha1.DeployedResourceRef{
+					newRefs = append(newRefs, seamv1alpha1.InfrastructureDeployedResourceRef{
 						APIVersion: dr.APIVersion,
 						Kind:       dr.Kind,
 						Namespace:  dr.Namespace,
@@ -589,19 +589,19 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 		if existingJob.Status.Failed > 0 {
 			msg := fmt.Sprintf("pack-deploy Job %q failed. Check Job logs.", jobName)
-			infrav1alpha1.SetCondition(
+			conditions.SetCondition(
 				&pe.Status.Conditions,
-				infrav1alpha1.ConditionTypePackExecutionRunning,
+				conditions.ConditionTypePackExecutionRunning,
 				metav1.ConditionFalse,
-				infrav1alpha1.ReasonJobFailed,
+				conditions.ReasonJobFailed,
 				msg,
 				pe.Generation,
 			)
-			infrav1alpha1.SetCondition(
+			conditions.SetCondition(
 				&pe.Status.Conditions,
-				infrav1alpha1.ConditionTypePackExecutionFailed,
+				conditions.ConditionTypePackExecutionFailed,
 				metav1.ConditionTrue,
-				infrav1alpha1.ReasonJobFailed,
+				conditions.ReasonJobFailed,
 				msg,
 				pe.Generation,
 			)
@@ -611,11 +611,11 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 
 		// Job exists and is still running.
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&pe.Status.Conditions,
-			infrav1alpha1.ConditionTypePackExecutionRunning,
+			conditions.ConditionTypePackExecutionRunning,
 			metav1.ConditionTrue,
-			infrav1alpha1.ReasonJobSubmitted,
+			conditions.ReasonJobSubmitted,
 			"pack-deploy Job is running.",
 			pe.Generation,
 		)
@@ -629,11 +629,11 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, fmt.Errorf("failed to create pack-deploy Job %s: %w", jobName, err)
 	}
 	pe.Status.JobName = jobName
-	infrav1alpha1.SetCondition(
+	conditions.SetCondition(
 		&pe.Status.Conditions,
-		infrav1alpha1.ConditionTypePackExecutionRunning,
+		conditions.ConditionTypePackExecutionRunning,
 		metav1.ConditionTrue,
-		infrav1alpha1.ReasonJobSubmitted,
+		conditions.ReasonJobSubmitted,
 		fmt.Sprintf("pack-deploy Job %q submitted to Kueue.", jobName),
 		pe.Generation,
 	)
@@ -649,7 +649,7 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 // has a Fresh=True condition. PermissionSnapshots live exclusively in seam-system
 // and are named "snapshot-{clusterRef}". guardian-schema.md §PS condition vocabulary.
 // Returns false (not error) if the snapshot is not found or not fresh.
-func (r *PackExecutionReconciler) isPermissionSnapshotCurrent(ctx context.Context, pe *infrav1alpha1.PackExecution) (bool, error) {
+func (r *PackExecutionReconciler) isPermissionSnapshotCurrent(ctx context.Context, pe *seamv1alpha1.InfrastructurePackExecution) (bool, error) {
 	ps := &unstructured.Unstructured{}
 	ps.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "security.ontai.dev",
@@ -686,7 +686,7 @@ func (r *PackExecutionReconciler) isPermissionSnapshotCurrent(ctx context.Contex
 // via unstructured to avoid importing guardian types. Returns true if the profile
 // has provisioned=true in its status. Pack RBACProfiles live in seam-tenant-{targetCluster}.
 // guardian-schema.md §RBACProfile.
-func (r *PackExecutionReconciler) isRBACProfileProvisioned(ctx context.Context, pe *infrav1alpha1.PackExecution) (bool, error) {
+func (r *PackExecutionReconciler) isRBACProfileProvisioned(ctx context.Context, pe *seamv1alpha1.InfrastructurePackExecution) (bool, error) {
 	rp := &unstructured.Unstructured{}
 	rp.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "security.ontai.dev",
@@ -730,7 +730,7 @@ func (r *PackExecutionReconciler) isRBACProfileProvisioned(ctx context.Context, 
 // Returns (false, nil) when TalosCluster is absent, RunnerConfig is absent, or
 // status.capabilities is empty. Returns (false, err) for unexpected API errors.
 // platform-schema.md §12, Gap 27.
-func (r *PackExecutionReconciler) isConductorReadyForCluster(ctx context.Context, pe *infrav1alpha1.PackExecution) (bool, error) {
+func (r *PackExecutionReconciler) isConductorReadyForCluster(ctx context.Context, pe *seamv1alpha1.InfrastructurePackExecution) (bool, error) {
 	clusterRef := pe.Spec.TargetClusterRef
 	tcGVK := schema.GroupVersionKind{
 		Group:   "platform.ontai.dev",
@@ -784,8 +784,8 @@ func (r *PackExecutionReconciler) isConductorReadyForCluster(ctx context.Context
 // The Job carries the kueue.x-k8s.io/queue-name label — without this label,
 // the Job will not be admitted. wrapper-design.md §4.
 func (r *PackExecutionReconciler) buildPackDeployJob(
-	pe *infrav1alpha1.PackExecution,
-	cp *infrav1alpha1.ClusterPack,
+	pe *seamv1alpha1.InfrastructurePackExecution,
+	cp *seamv1alpha1.InfrastructureClusterPack,
 	jobName string,
 ) *batchv1.Job {
 	ttl := packDeployJobTTL
@@ -808,7 +808,7 @@ func (r *PackExecutionReconciler) buildPackDeployJob(
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion:         infrav1alpha1.GroupVersion.String(),
+					APIVersion:         seamv1alpha1.GroupVersion.String(),
 					Kind:               "PackExecution",
 					Name:               pe.Name,
 					UID:                pe.UID,
@@ -882,7 +882,7 @@ func (r *PackExecutionReconciler) buildPackDeployJob(
 }
 
 // packDeployJobName constructs a deterministic Job name from the PackExecution name.
-func packDeployJobName(pe *infrav1alpha1.PackExecution) string {
+func packDeployJobName(pe *seamv1alpha1.InfrastructurePackExecution) string {
 	return fmt.Sprintf("pack-deploy-%s", pe.Name)
 }
 
@@ -917,7 +917,7 @@ func (r *PackExecutionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Kind:    "RBACProfile",
 	})
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&infrav1alpha1.PackExecution{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		For(&seamv1alpha1.InfrastructurePackExecution{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Owns(&batchv1.Job{}).
 		Watches(psObj, handler.EnqueueRequestsFromMapFunc(r.mapSnapshotToPackExecutions)).
 		Watches(rpObj, handler.EnqueueRequestsFromMapFunc(r.mapRBACProfileToPackExecutions)).
@@ -938,7 +938,7 @@ func (r *PackExecutionReconciler) mapSnapshotToPackExecutions(
 		return nil
 	}
 	ns := "seam-tenant-" + clusterRef
-	peList := &infrav1alpha1.PackExecutionList{}
+	peList := &seamv1alpha1.InfrastructurePackExecutionList{}
 	if err := r.Client.List(ctx, peList, client.InNamespace(ns)); err != nil {
 		return nil
 	}
@@ -965,7 +965,7 @@ func packUpgradeDirection(
 	c client.Client,
 	piName, piNamespace, newVersion string,
 ) seamv1alpha1.PackUpgradeDirection {
-	existing := &infrav1alpha1.PackInstance{}
+	existing := &seamv1alpha1.InfrastructurePackInstance{}
 	if err := c.Get(ctx, client.ObjectKey{Name: piName, Namespace: piNamespace}, existing); err != nil {
 		return seamv1alpha1.PackUpgradeDirectionInitial
 	}
@@ -1024,7 +1024,7 @@ func (r *PackExecutionReconciler) mapRBACProfileToPackExecutions(
 	obj client.Object,
 ) []reconcile.Request {
 	profileName := obj.GetName()
-	peList := &infrav1alpha1.PackExecutionList{}
+	peList := &seamv1alpha1.InfrastructurePackExecutionList{}
 	if err := r.Client.List(ctx, peList); err != nil {
 		return nil
 	}

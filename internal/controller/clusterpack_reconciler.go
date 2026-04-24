@@ -22,7 +22,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	infrav1alpha1 "github.com/ontai-dev/wrapper/api/v1alpha1"
+	seamcorev1alpha1 "github.com/ontai-dev/seam-core/api/v1alpha1"
+	"github.com/ontai-dev/seam-core/pkg/conditions"
 )
 
 // packSignatureAnnotation is the annotation key set by the conductor signing loop
@@ -34,7 +35,7 @@ const packSignatureAnnotation = "ontai.dev/pack-signature"
 // clusterPackFinalizer is added to every ClusterPack on first reconcile.
 // On deletion it triggers cleanup of all PackInstances and RunnerConfigs
 // derived from this ClusterPack before the object is removed from etcd.
-const clusterPackFinalizer = "infra.ontai.dev/clusterpack-cleanup"
+const clusterPackFinalizer = "infrastructure.ontai.dev/clusterpack-cleanup"
 
 // ClusterPackReconciler watches ClusterPack CRs and manages their signing lifecycle
 // and immutability enforcement.
@@ -67,7 +68,7 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	logger := log.FromContext(ctx)
 
 	// Step A — Fetch the ClusterPack CR.
-	cp := &infrav1alpha1.ClusterPack{}
+	cp := &seamcorev1alpha1.InfrastructureClusterPack{}
 	if err := r.Client.Get(ctx, req.NamespacedName, cp); err != nil {
 		if apierrors.IsNotFound(err) {
 			logger.Info("ClusterPack not found — likely deleted, ignoring",
@@ -129,12 +130,12 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	// Step E — Initialize LineageSynced on first observation (one-time write).
 	// seam-core-schema.md §7 Declaration 5.
-	if infrav1alpha1.FindCondition(cp.Status.Conditions, infrav1alpha1.ConditionTypeLineageSynced) == nil {
-		infrav1alpha1.SetCondition(
+	if conditions.FindCondition(cp.Status.Conditions, conditions.ConditionTypeLineageSynced) == nil {
+		conditions.SetCondition(
 			&cp.Status.Conditions,
-			infrav1alpha1.ConditionTypeLineageSynced,
+			conditions.ConditionTypeLineageSynced,
 			metav1.ConditionFalse,
-			infrav1alpha1.ReasonLineageControllerAbsent,
+			conditions.ReasonLineageControllerAbsent,
 			"InfrastructureLineageController is not yet deployed.",
 			cp.Generation,
 		)
@@ -144,11 +145,11 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// step B. Any divergence between the current spec and the snapshot is a security event.
 	if stored := cp.Annotations[specSnapshotAnnotation]; stored != currentChecksum {
 		msg := "ClusterPack spec mutation detected — spec is immutable after creation. CI-INV-002."
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&cp.Status.Conditions,
-			infrav1alpha1.ConditionTypeClusterPackImmutabilityViolation,
+			conditions.ConditionTypeClusterPackImmutabilityViolation,
 			metav1.ConditionTrue,
-			infrav1alpha1.ReasonImmutabilityViolation,
+			conditions.ReasonImmutabilityViolation,
 			msg,
 			cp.Generation,
 		)
@@ -159,7 +160,7 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	// Step F — Check revocation. If Revoked=True, stop. Human intervention required.
-	revokedCond := infrav1alpha1.FindCondition(cp.Status.Conditions, infrav1alpha1.ConditionTypeClusterPackRevoked)
+	revokedCond := conditions.FindCondition(cp.Status.Conditions, conditions.ConditionTypeClusterPackRevoked)
 	if revokedCond != nil && revokedCond.Status == metav1.ConditionTrue {
 		logger.Info("ClusterPack is revoked — no further reconciliation",
 			"name", cp.Name, "namespace", cp.Namespace)
@@ -172,19 +173,19 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if hasSig && !cp.Status.Signed {
 		cp.Status.Signed = true
 		cp.Status.PackSignature = sig
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&cp.Status.Conditions,
-			infrav1alpha1.ConditionTypeClusterPackSignaturePending,
+			conditions.ConditionTypeClusterPackSignaturePending,
 			metav1.ConditionFalse,
-			infrav1alpha1.ReasonPackSigned,
+			conditions.ReasonPackSigned,
 			"Pack has been signed by the conductor signing loop.",
 			cp.Generation,
 		)
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&cp.Status.Conditions,
-			infrav1alpha1.ConditionTypeClusterPackAvailable,
+			conditions.ConditionTypeClusterPackAvailable,
 			metav1.ConditionTrue,
-			infrav1alpha1.ReasonPackAvailable,
+			conditions.ReasonPackAvailable,
 			"Pack is signed and available for deployment.",
 			cp.Generation,
 		)
@@ -196,19 +197,19 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	// Step H — Not yet signed. Ensure SignaturePending condition and requeue.
 	if !cp.Status.Signed {
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&cp.Status.Conditions,
-			infrav1alpha1.ConditionTypeClusterPackSignaturePending,
+			conditions.ConditionTypeClusterPackSignaturePending,
 			metav1.ConditionTrue,
-			infrav1alpha1.ReasonPackSignaturePending,
+			conditions.ReasonPackSignaturePending,
 			"Waiting for conductor signing loop to sign this pack.",
 			cp.Generation,
 		)
-		infrav1alpha1.SetCondition(
+		conditions.SetCondition(
 			&cp.Status.Conditions,
-			infrav1alpha1.ConditionTypeClusterPackAvailable,
+			conditions.ConditionTypeClusterPackAvailable,
 			metav1.ConditionFalse,
-			infrav1alpha1.ReasonPackSignaturePending,
+			conditions.ReasonPackSignaturePending,
 			"Pack not yet signed.",
 			cp.Generation,
 		)
@@ -226,7 +227,7 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		peName := cp.Name + "-" + clusterName
 
 		// If PackInstance exists with current version, delivery is already complete — skip.
-		existingPI := &infrav1alpha1.PackInstance{}
+		existingPI := &seamcorev1alpha1.InfrastructurePackInstance{}
 		piErr := r.Client.Get(ctx, client.ObjectKey{Name: peName, Namespace: tenantNS}, existingPI)
 		if piErr == nil {
 			if existingPI.Spec.Version == cp.Spec.Version {
@@ -245,7 +246,7 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 
 		// Skip if PackExecution already exists — delivery is in progress.
-		existingPE := &infrav1alpha1.PackExecution{}
+		existingPE := &seamcorev1alpha1.InfrastructurePackExecution{}
 		if err := r.Client.Get(ctx, client.ObjectKey{Name: peName, Namespace: tenantNS}, existingPE); err == nil {
 			logger.Info("PackExecution exists — skipping creation",
 				"pack", cp.Name, "cluster", clusterName)
@@ -255,7 +256,7 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 
 		// Create PackExecution directly for pack delivery to this cluster.
-		newPE := &infrav1alpha1.PackExecution{
+		newPE := &seamcorev1alpha1.InfrastructurePackExecution{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      peName,
 				Namespace: tenantNS,
@@ -265,8 +266,8 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 					"platform.ontai.dev/cluster":    clusterName,
 				},
 			},
-			Spec: infrav1alpha1.PackExecutionSpec{
-				ClusterPackRef: infrav1alpha1.ClusterPackRef{
+			Spec: seamcorev1alpha1.InfrastructurePackExecutionSpec{
+				ClusterPackRef: seamcorev1alpha1.InfrastructureClusterPackRef{
 					Name:    cp.Name,
 					Version: cp.Spec.Version,
 				},
@@ -292,13 +293,13 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 //  2. Delete all PackExecutions whose spec.clusterPackRef.name matches cp.Name
 //     (listed cluster-wide, filtered in memory — no field index registered).
 //  3. Remove the clusterPackFinalizer so the API server can delete the object.
-func (r *ClusterPackReconciler) handleClusterPackDeletion(ctx context.Context, cp *infrav1alpha1.ClusterPack) (ctrl.Result, error) {
+func (r *ClusterPackReconciler) handleClusterPackDeletion(ctx context.Context, cp *seamcorev1alpha1.InfrastructureClusterPack) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	// 1. Delete PackInstances matching spec.clusterPackRef == cp.Name.
 	// PackInstances have no registered field index on spec.clusterPackRef, so list
 	// all PackInstances cluster-wide and filter in memory.
-	piList := &infrav1alpha1.PackInstanceList{}
+	piList := &seamcorev1alpha1.InfrastructurePackInstanceList{}
 	if err := r.Client.List(ctx, piList); err != nil {
 		return ctrl.Result{}, fmt.Errorf("list PackInstances for ClusterPack %s cleanup: %w", cp.Name, err)
 	}
@@ -317,7 +318,7 @@ func (r *ClusterPackReconciler) handleClusterPackDeletion(ctx context.Context, c
 	// 2. Delete PackExecutions whose spec.clusterPackRef.name matches cp.Name.
 	// PackExecution has no registered field index on spec.clusterPackRef.name, so list
 	// all cluster-wide and filter in memory. wrapper-schema.md §3 delivery chain.
-	peList := &infrav1alpha1.PackExecutionList{}
+	peList := &seamcorev1alpha1.InfrastructurePackExecutionList{}
 	if err := r.Client.List(ctx, peList); err != nil {
 		return ctrl.Result{}, fmt.Errorf("list PackExecutions for ClusterPack %s cleanup: %w", cp.Name, err)
 	}
@@ -381,12 +382,12 @@ func (r *ClusterPackReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 	}
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&infrav1alpha1.ClusterPack{}, builder.WithPredicates(predicate.Or(
+		For(&seamcorev1alpha1.InfrastructureClusterPack{}, builder.WithPredicates(predicate.Or(
 			predicate.GenerationChangedPredicate{},
 			predicate.AnnotationChangedPredicate{},
 		))).
 		Owns(&batchv1.Job{}).
-		Watches(&infrav1alpha1.PackInstance{},
+		Watches(&seamcorev1alpha1.InfrastructurePackInstance{},
 			handler.EnqueueRequestsFromMapFunc(r.mapPackInstanceToClusterPack),
 			builder.WithPredicates(packInstanceDeletePredicate),
 		).
@@ -403,7 +404,7 @@ func (r *ClusterPackReconciler) mapPackInstanceToClusterPack(
 	ctx context.Context,
 	obj client.Object,
 ) []reconcile.Request {
-	pi, ok := obj.(*infrav1alpha1.PackInstance)
+	pi, ok := obj.(*seamcorev1alpha1.InfrastructurePackInstance)
 	if !ok {
 		return nil
 	}
@@ -418,7 +419,7 @@ func (r *ClusterPackReconciler) mapPackInstanceToClusterPack(
 	clusterName := strings.TrimPrefix(ns, "seam-tenant-")
 	if clusterName != ns {
 		peName := cpName + "-" + clusterName
-		pe := &infrav1alpha1.PackExecution{}
+		pe := &seamcorev1alpha1.InfrastructurePackExecution{}
 		if getErr := r.Client.Get(ctx, client.ObjectKey{Name: peName, Namespace: ns}, pe); getErr == nil {
 			_ = r.Client.Delete(ctx, pe)
 		}

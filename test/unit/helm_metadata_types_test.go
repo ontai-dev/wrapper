@@ -14,13 +14,13 @@ import (
 	"encoding/json"
 	"testing"
 
-	wrapperv1alpha1 "github.com/ontai-dev/wrapper/api/v1alpha1"
+	seamcorev1alpha1 "github.com/ontai-dev/seam-core/api/v1alpha1"
 )
 
 func TestClusterPackSpec_HelmMetadataFields_RoundTrip(t *testing.T) {
-	spec := wrapperv1alpha1.ClusterPackSpec{
+	spec := seamcorev1alpha1.InfrastructureClusterPackSpec{
 		Version: "v1.0.0",
-		RegistryRef: wrapperv1alpha1.PackRegistryRef{
+		RegistryRef: seamcorev1alpha1.InfrastructurePackRegistryRef{
 			URL:    "registry.example.com/packs/cert-manager",
 			Digest: "sha256:abc123",
 		},
@@ -36,7 +36,7 @@ func TestClusterPackSpec_HelmMetadataFields_RoundTrip(t *testing.T) {
 		t.Fatalf("marshal ClusterPackSpec: %v", err)
 	}
 
-	var got wrapperv1alpha1.ClusterPackSpec
+	var got seamcorev1alpha1.InfrastructureClusterPackSpec
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("unmarshal ClusterPackSpec: %v", err)
 	}
@@ -56,9 +56,9 @@ func TestClusterPackSpec_HelmMetadataFields_RoundTrip(t *testing.T) {
 }
 
 func TestClusterPackSpec_HelmMetadataFields_AbsentWhenZero(t *testing.T) {
-	spec := wrapperv1alpha1.ClusterPackSpec{
+	spec := seamcorev1alpha1.InfrastructureClusterPackSpec{
 		Version: "v1.0.0",
-		RegistryRef: wrapperv1alpha1.PackRegistryRef{
+		RegistryRef: seamcorev1alpha1.InfrastructurePackRegistryRef{
 			URL: "registry.example.com/packs/raw-pack",
 		},
 		Checksum: "deadbeef",
@@ -83,8 +83,8 @@ func TestClusterPackSpec_HelmMetadataFields_AbsentWhenZero(t *testing.T) {
 }
 
 func TestPackExecutionSpec_HelmMetadataFields_RoundTrip(t *testing.T) {
-	spec := wrapperv1alpha1.PackExecutionSpec{
-		ClusterPackRef: wrapperv1alpha1.ClusterPackRef{
+	spec := seamcorev1alpha1.InfrastructurePackExecutionSpec{
+		ClusterPackRef: seamcorev1alpha1.InfrastructureClusterPackRef{
 			Name:    "cert-manager-v1.13.3-r1",
 			Version: "v1.13.3",
 		},
@@ -101,7 +101,7 @@ func TestPackExecutionSpec_HelmMetadataFields_RoundTrip(t *testing.T) {
 		t.Fatalf("marshal PackExecutionSpec: %v", err)
 	}
 
-	var got wrapperv1alpha1.PackExecutionSpec
+	var got seamcorev1alpha1.InfrastructurePackExecutionSpec
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("unmarshal PackExecutionSpec: %v", err)
 	}
@@ -121,8 +121,8 @@ func TestPackExecutionSpec_HelmMetadataFields_RoundTrip(t *testing.T) {
 }
 
 func TestPackExecutionSpec_HelmMetadataFields_AbsentWhenZero(t *testing.T) {
-	spec := wrapperv1alpha1.PackExecutionSpec{
-		ClusterPackRef: wrapperv1alpha1.ClusterPackRef{
+	spec := seamcorev1alpha1.InfrastructurePackExecutionSpec{
+		ClusterPackRef: seamcorev1alpha1.InfrastructureClusterPackRef{
 			Name:    "raw-pack-v1.0.0-r1",
 			Version: "v1.0.0",
 		},
@@ -149,7 +149,7 @@ func TestPackExecutionSpec_HelmMetadataFields_AbsentWhenZero(t *testing.T) {
 }
 
 func TestPackInstanceSpec_HelmMetadataFields_RoundTrip(t *testing.T) {
-	spec := wrapperv1alpha1.PackInstanceSpec{
+	spec := seamcorev1alpha1.InfrastructurePackInstanceSpec{
 		ClusterPackRef:   "cert-manager-v1.13.3-r1",
 		TargetClusterRef: "ccs-mgmt",
 		ChartVersion:     "v1.13.3",
@@ -163,7 +163,7 @@ func TestPackInstanceSpec_HelmMetadataFields_RoundTrip(t *testing.T) {
 		t.Fatalf("marshal PackInstanceSpec: %v", err)
 	}
 
-	var got wrapperv1alpha1.PackInstanceSpec
+	var got seamcorev1alpha1.InfrastructurePackInstanceSpec
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("unmarshal PackInstanceSpec: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestPackInstanceSpec_HelmMetadataFields_RoundTrip(t *testing.T) {
 }
 
 func TestPackInstanceSpec_HelmMetadataFields_AbsentWhenZero(t *testing.T) {
-	spec := wrapperv1alpha1.PackInstanceSpec{
+	spec := seamcorev1alpha1.InfrastructurePackInstanceSpec{
 		ClusterPackRef:   "raw-pack-v1.0.0-r1",
 		TargetClusterRef: "ccs-mgmt",
 		// No helm metadata -- raw or kustomize pack.

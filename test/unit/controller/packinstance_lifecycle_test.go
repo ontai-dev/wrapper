@@ -29,7 +29,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	infrav1alpha1 "github.com/ontai-dev/wrapper/api/v1alpha1"
+	seamcorev1alpha1 "github.com/ontai-dev/seam-core/api/v1alpha1"
+	"github.com/ontai-dev/seam-core/pkg/conditions"
 	"github.com/ontai-dev/wrapper/internal/controller"
 )
 
@@ -50,7 +51,7 @@ func reconcilePackExecution(t *testing.T, r *controller.PackExecutionReconciler,
 //   - TalosCluster: ConductorReady=True (gate 0 clear)
 //   - PermissionSnapshot: Current=True (gate 3 clear)
 //   - RBACProfile: provisioned=true (gate 4 clear)
-func allGatesSetup(t *testing.T, peName, cpName, cpVersion, clusterRef, profileRef string) (client.Client, *infrav1alpha1.PackExecution) {
+func allGatesSetup(t *testing.T, peName, cpName, cpVersion, clusterRef, profileRef string) (client.Client, *seamcorev1alpha1.InfrastructurePackExecution) {
 	t.Helper()
 	s := buildTestScheme(t)
 
@@ -63,7 +64,7 @@ func allGatesSetup(t *testing.T, peName, cpName, cpVersion, clusterRef, profileR
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
-		WithStatusSubresource(&infrav1alpha1.PackExecution{}, &infrav1alpha1.PackInstance{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}, &seamcorev1alpha1.InfrastructurePackInstance{}).
 		Build()
 
 	ctx := context.Background()
@@ -135,11 +136,11 @@ func TestOwnershipChain_TalosClusterExists(t *testing.T) {
 	}
 
 	// Assertion 2: PackExecution Succeeded=True.
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("get PackExecution: %v", err)
 	}
-	succeededCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionSucceeded)
+	succeededCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackExecutionSucceeded)
 	if succeededCond == nil {
 		t.Fatal("PackExecution Succeeded condition not set after Job success")
 	}
@@ -153,7 +154,7 @@ func TestOwnershipChain_TalosClusterExists(t *testing.T) {
 
 	// Assertion 3: PackInstance created in seam-tenant-{clusterRef} (explicit per schema).
 	piName := cpName + "-" + clusterRef // "my-pack-cluster-a"
-	pi := &infrav1alpha1.PackInstance{}
+	pi := &seamcorev1alpha1.InfrastructurePackInstance{}
 	if err := fakeClient.Get(ctx, types.NamespacedName{Name: piName, Namespace: "seam-tenant-" + clusterRef}, pi); err != nil {
 		t.Fatalf("PackInstance %q not created after Job success: %v", piName, err)
 	}
@@ -199,7 +200,7 @@ func TestWaitingForCluster_TalosClusterAbsent(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
-		WithStatusSubresource(&infrav1alpha1.PackExecution{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}).
 		Build()
 	// TalosCluster for "cluster-missing" is deliberately absent.
 
@@ -218,19 +219,19 @@ func TestWaitingForCluster_TalosClusterAbsent(t *testing.T) {
 	}
 
 	// Waiting=True with AwaitingConductorReady reason.
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("get PackExecution: %v", err)
 	}
-	waitCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionWaiting)
+	waitCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackExecutionWaiting)
 	if waitCond == nil {
 		t.Fatal("Waiting condition not set when TalosCluster is absent")
 	}
 	if waitCond.Status != metav1.ConditionTrue {
 		t.Errorf("Waiting=%s, want True", waitCond.Status)
 	}
-	if waitCond.Reason != infrav1alpha1.ReasonAwaitingConductorReady {
-		t.Errorf("Waiting reason=%q, want %q", waitCond.Reason, infrav1alpha1.ReasonAwaitingConductorReady)
+	if waitCond.Reason != conditions.ReasonAwaitingConductorReady {
+		t.Errorf("Waiting reason=%q, want %q", waitCond.Reason, conditions.ReasonAwaitingConductorReady)
 	}
 
 	// No Jobs created — INV-006.
@@ -243,7 +244,7 @@ func TestWaitingForCluster_TalosClusterAbsent(t *testing.T) {
 	}
 
 	// No PackInstances created.
-	piList := &infrav1alpha1.PackInstanceList{}
+	piList := &seamcorev1alpha1.InfrastructurePackInstanceList{}
 	if err := fakeClient.List(ctx, piList, client.InNamespace("infra-system")); err != nil {
 		t.Fatalf("list PackInstances: %v", err)
 	}
@@ -292,14 +293,14 @@ func TestDeletion_PackExecutionNotFound_NoJobCreated(t *testing.T) {
 // INV-006: deletion triggers events only. wrapper-design.md §3.
 func TestDeletion_ClusterPackReconciler_NoJobsSubmitted(t *testing.T) {
 	s := buildTestScheme(t)
-	cp := &infrav1alpha1.ClusterPack{
+	cp := &seamcorev1alpha1.InfrastructureClusterPack{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-pack",
 			Namespace: "infra-system",
 		},
-		Spec: infrav1alpha1.ClusterPackSpec{
+		Spec: seamcorev1alpha1.InfrastructureClusterPackSpec{
 			Version: "v1.0.0",
-			RegistryRef: infrav1alpha1.PackRegistryRef{
+			RegistryRef: seamcorev1alpha1.InfrastructurePackRegistryRef{
 				URL:    "registry.ontai.dev/packs/test-pack",
 				Digest: "sha256:abc123",
 			},
@@ -309,7 +310,7 @@ func TestDeletion_ClusterPackReconciler_NoJobsSubmitted(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp).
-		WithStatusSubresource(&infrav1alpha1.ClusterPack{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructureClusterPack{}).
 		Build()
 
 	r := &controller.ClusterPackReconciler{
@@ -356,7 +357,7 @@ func TestGate0_RunnerConfigAbsent(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
-		WithStatusSubresource(&infrav1alpha1.PackExecution{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}).
 		Build()
 	if err := fakeClient.Create(context.Background(), tc); err != nil {
 		t.Fatalf("create TalosCluster: %v", err)
@@ -375,17 +376,17 @@ func TestGate0_RunnerConfigAbsent(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("get PackExecution: %v", err)
 	}
 
-	waitCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionWaiting)
+	waitCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackExecutionWaiting)
 	if waitCond == nil || waitCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected Waiting=True when ConductorReady=False, got %+v", waitCond)
 	}
-	if waitCond.Reason != infrav1alpha1.ReasonAwaitingConductorReady {
-		t.Errorf("Waiting reason=%q, want %q", waitCond.Reason, infrav1alpha1.ReasonAwaitingConductorReady)
+	if waitCond.Reason != conditions.ReasonAwaitingConductorReady {
+		t.Errorf("Waiting reason=%q, want %q", waitCond.Reason, conditions.ReasonAwaitingConductorReady)
 	}
 
 	jobList := &batchv1.JobList{}
@@ -417,7 +418,7 @@ func TestGate1_SignaturePending(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
-		WithStatusSubresource(&infrav1alpha1.PackExecution{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}).
 		Build()
 	ctx := context.Background()
 	for _, obj := range []client.Object{tc, rc} {
@@ -438,17 +439,17 @@ func TestGate1_SignaturePending(t *testing.T) {
 		t.Errorf("expected RequeueAfter=15s for signature gate, got %v", result.RequeueAfter)
 	}
 
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("get PackExecution: %v", err)
 	}
 
-	sigPendingCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackSignaturePending)
+	sigPendingCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackSignaturePending)
 	if sigPendingCond == nil || sigPendingCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected PackSignaturePending=True when unsigned, got %+v", sigPendingCond)
 	}
-	if sigPendingCond.Reason != infrav1alpha1.ReasonAwaitingSignature {
-		t.Errorf("reason=%q, want %q", sigPendingCond.Reason, infrav1alpha1.ReasonAwaitingSignature)
+	if sigPendingCond.Reason != conditions.ReasonAwaitingSignature {
+		t.Errorf("reason=%q, want %q", sigPendingCond.Reason, conditions.ReasonAwaitingSignature)
 	}
 
 	jobList := &batchv1.JobList{}
@@ -474,9 +475,9 @@ func TestGate2_PackRevoked(t *testing.T) {
 	s := buildTestScheme(t)
 	cp := newSignedCP(cpName, cpVersion, "infra-system")
 	cp.Status.Conditions = []metav1.Condition{{
-		Type:               infrav1alpha1.ConditionTypeClusterPackRevoked,
+		Type:               conditions.ConditionTypeClusterPackRevoked,
 		Status:             metav1.ConditionTrue,
-		Reason:             infrav1alpha1.ReasonPackRevoked,
+		Reason:             conditions.ReasonPackRevoked,
 		Message:            "revoked by platform governor",
 		LastTransitionTime: metav1.Now(),
 	}}
@@ -488,7 +489,7 @@ func TestGate2_PackRevoked(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
-		WithStatusSubresource(&infrav1alpha1.PackExecution{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}).
 		Build()
 	ctx := context.Background()
 	for _, obj := range []client.Object{tc, rc, ps, rp} {
@@ -510,11 +511,11 @@ func TestGate2_PackRevoked(t *testing.T) {
 		t.Errorf("expected no requeue when pack revoked (human intervention), got %+v", result)
 	}
 
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("get PackExecution: %v", err)
 	}
-	revokedCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackRevoked)
+	revokedCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackRevoked)
 	if revokedCond == nil || revokedCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected PackRevoked=True, got %+v", revokedCond)
 	}
@@ -549,7 +550,7 @@ func TestGate3_PermissionSnapshotOutOfSync(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
-		WithStatusSubresource(&infrav1alpha1.PackExecution{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}).
 		Build()
 	ctx := context.Background()
 	for _, obj := range []client.Object{tc, rc, ps, rp} {
@@ -570,16 +571,16 @@ func TestGate3_PermissionSnapshotOutOfSync(t *testing.T) {
 		t.Error("expected requeue when Gate 3 (PermissionSnapshot) not cleared")
 	}
 
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("get PackExecution: %v", err)
 	}
-	psCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePermissionSnapshotOutOfSync)
+	psCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePermissionSnapshotOutOfSync)
 	if psCond == nil || psCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected PermissionSnapshotOutOfSync=True, got %+v", psCond)
 	}
-	if psCond.Reason != infrav1alpha1.ReasonSnapshotOutOfSync {
-		t.Errorf("reason=%q, want %q", psCond.Reason, infrav1alpha1.ReasonSnapshotOutOfSync)
+	if psCond.Reason != conditions.ReasonSnapshotOutOfSync {
+		t.Errorf("reason=%q, want %q", psCond.Reason, conditions.ReasonSnapshotOutOfSync)
 	}
 
 	jobList := &batchv1.JobList{}
@@ -612,7 +613,7 @@ func TestGate4_RBACProfileNotProvisioned(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
-		WithStatusSubresource(&infrav1alpha1.PackExecution{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}).
 		Build()
 	ctx := context.Background()
 	for _, obj := range []client.Object{tc, rc, ps, rp} {
@@ -633,16 +634,16 @@ func TestGate4_RBACProfileNotProvisioned(t *testing.T) {
 		t.Error("expected requeue when Gate 4 (RBACProfile) not cleared")
 	}
 
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("get PackExecution: %v", err)
 	}
-	rbacCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypeRBACProfileNotProvisioned)
+	rbacCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypeRBACProfileNotProvisioned)
 	if rbacCond == nil || rbacCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected RBACProfileNotProvisioned=True, got %+v", rbacCond)
 	}
-	if rbacCond.Reason != infrav1alpha1.ReasonRBACProfileNotReady {
-		t.Errorf("reason=%q, want %q", rbacCond.Reason, infrav1alpha1.ReasonRBACProfileNotReady)
+	if rbacCond.Reason != conditions.ReasonRBACProfileNotReady {
+		t.Errorf("reason=%q, want %q", rbacCond.Reason, conditions.ReasonRBACProfileNotReady)
 	}
 
 	jobList := &batchv1.JobList{}
@@ -683,7 +684,7 @@ func TestConductorReady_ManagementClusterFallback_SeamSystem(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
-		WithStatusSubresource(&infrav1alpha1.PackExecution{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}).
 		Build()
 	ctx := context.Background()
 	for _, obj := range []client.Object{tc, rc, ps, rp} {
@@ -706,14 +707,14 @@ func TestConductorReady_ManagementClusterFallback_SeamSystem(t *testing.T) {
 
 	reconcilePackExecution(t, r, peName, "infra-system")
 
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("get PackExecution: %v", err)
 	}
 
 	// Gate 0 must have cleared: Waiting condition must NOT be set with AwaitingConductorReady.
-	waitCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionWaiting)
-	if waitCond != nil && waitCond.Status == metav1.ConditionTrue && waitCond.Reason == infrav1alpha1.ReasonAwaitingConductorReady {
+	waitCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackExecutionWaiting)
+	if waitCond != nil && waitCond.Status == metav1.ConditionTrue && waitCond.Reason == conditions.ReasonAwaitingConductorReady {
 		t.Errorf("gate 0 blocked with seam-system fallback TalosCluster; expected gate 0 to clear: %+v", waitCond)
 	}
 }
@@ -747,14 +748,14 @@ func TestConductorReady_RunnerConfigWithCapabilities_ReturnsTrue(t *testing.T) {
 
 	reconcilePackExecution(t, r, peName, "infra-system")
 
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("get PackExecution: %v", err)
 	}
 
 	// Gate 0 cleared — Waiting condition must NOT have AwaitingConductorReady.
-	waitCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionWaiting)
-	if waitCond != nil && waitCond.Status == metav1.ConditionTrue && waitCond.Reason == infrav1alpha1.ReasonAwaitingConductorReady {
+	waitCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackExecutionWaiting)
+	if waitCond != nil && waitCond.Status == metav1.ConditionTrue && waitCond.Reason == conditions.ReasonAwaitingConductorReady {
 		t.Errorf("gate 0 blocked unexpectedly with RunnerConfig present: %+v", waitCond)
 	}
 }
@@ -779,7 +780,7 @@ func TestConductorReady_RunnerConfigAbsent_ReturnsFalse(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
-		WithStatusSubresource(&infrav1alpha1.PackExecution{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}).
 		Build()
 	if err := fakeClient.Create(context.Background(), tc); err != nil {
 		t.Fatalf("create TalosCluster: %v", err)
@@ -799,16 +800,16 @@ func TestConductorReady_RunnerConfigAbsent_ReturnsFalse(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("get PackExecution: %v", err)
 	}
-	waitCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionWaiting)
+	waitCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackExecutionWaiting)
 	if waitCond == nil || waitCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected Waiting=True when RunnerConfig absent, got %+v", waitCond)
 	}
-	if waitCond.Reason != infrav1alpha1.ReasonAwaitingConductorReady {
-		t.Errorf("Waiting reason=%q, want %q", waitCond.Reason, infrav1alpha1.ReasonAwaitingConductorReady)
+	if waitCond.Reason != conditions.ReasonAwaitingConductorReady {
+		t.Errorf("Waiting reason=%q, want %q", waitCond.Reason, conditions.ReasonAwaitingConductorReady)
 	}
 }
 
@@ -834,7 +835,7 @@ func TestConductorReady_RunnerConfigEmptyCapabilities_ReturnsFalse(t *testing.T)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
-		WithStatusSubresource(&infrav1alpha1.PackExecution{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}).
 		Build()
 	ctx := context.Background()
 	for _, obj := range []client.Object{tc, rc} {
@@ -855,15 +856,15 @@ func TestConductorReady_RunnerConfigEmptyCapabilities_ReturnsFalse(t *testing.T)
 		t.Error("expected requeue when RunnerConfig has empty capabilities (gate 0 not cleared)")
 	}
 
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("get PackExecution: %v", err)
 	}
-	waitCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionWaiting)
+	waitCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackExecutionWaiting)
 	if waitCond == nil || waitCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected Waiting=True when RunnerConfig has empty capabilities, got %+v", waitCond)
 	}
-	if waitCond.Reason != infrav1alpha1.ReasonAwaitingConductorReady {
-		t.Errorf("Waiting reason=%q, want %q", waitCond.Reason, infrav1alpha1.ReasonAwaitingConductorReady)
+	if waitCond.Reason != conditions.ReasonAwaitingConductorReady {
+		t.Errorf("Waiting reason=%q, want %q", waitCond.Reason, conditions.ReasonAwaitingConductorReady)
 	}
 }

@@ -11,7 +11,6 @@ import (
 
 	seamv1alpha1 "github.com/ontai-dev/seam-core/api/v1alpha1"
 	"github.com/ontai-dev/wrapper/internal/controller"
-	infrav1alpha1 "github.com/ontai-dev/wrapper/api/v1alpha1"
 )
 
 func makePOR(name, namespace, packExecutionRef string, revision int64, status seamv1alpha1.PackResultStatus) *seamv1alpha1.PackOperationResult {
@@ -61,7 +60,7 @@ func TestFindLatestPOR_SingleResult(t *testing.T) {
 	}
 	reconcilePackExecution(t, r, peName, "infra-system")
 
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamv1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(ctx, ctrlclient.ObjectKey{Name: peName, Namespace: "infra-system"}, updated); err != nil {
 		t.Fatalf("get PackExecution: %v", err)
 	}
@@ -104,7 +103,7 @@ func TestFindLatestPOR_MultipleRevisions(t *testing.T) {
 	}
 	reconcilePackExecution(t, r, peName, "infra-system")
 
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamv1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(ctx, ctrlclient.ObjectKey{Name: peName, Namespace: "infra-system"}, updated); err != nil {
 		t.Fatalf("get PackExecution: %v", err)
 	}
@@ -143,7 +142,7 @@ func TestFindLatestPOR_NoPOR(t *testing.T) {
 		t.Error("expected RequeueAfter when POR not yet written; got no requeue")
 	}
 
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamv1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(ctx, ctrlclient.ObjectKey{Name: peName, Namespace: "infra-system"}, updated); err != nil {
 		t.Fatalf("get PackExecution: %v", err)
 	}

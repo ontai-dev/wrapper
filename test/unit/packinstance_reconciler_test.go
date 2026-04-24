@@ -15,7 +15,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	infrav1alpha1 "github.com/ontai-dev/wrapper/api/v1alpha1"
+	seamcorev1alpha1 "github.com/ontai-dev/seam-core/api/v1alpha1"
+	"github.com/ontai-dev/seam-core/pkg/conditions"
 	"github.com/ontai-dev/wrapper/internal/controller"
 )
 
@@ -25,19 +26,19 @@ func newPackInstanceScheme(t *testing.T) *runtime.Scheme {
 	if err := clientgoscheme.AddToScheme(s); err != nil {
 		t.Fatalf("AddToScheme clientgo: %v", err)
 	}
-	if err := infrav1alpha1.AddToScheme(s); err != nil {
-		t.Fatalf("AddToScheme infrav1alpha1: %v", err)
+	if err := seamcorev1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("AddToScheme seamcorev1alpha1: %v", err)
 	}
 	return s
 }
 
-func newPackInstance(name, namespace, packRef, clusterRef string) *infrav1alpha1.PackInstance {
-	return &infrav1alpha1.PackInstance{
+func newPackInstance(name, namespace, packRef, clusterRef string) *seamcorev1alpha1.InfrastructurePackInstance {
+	return &seamcorev1alpha1.InfrastructurePackInstance{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 		},
-		Spec: infrav1alpha1.PackInstanceSpec{
+		Spec: seamcorev1alpha1.InfrastructurePackInstanceSpec{
 			ClusterPackRef:   packRef,
 			TargetClusterRef: clusterRef,
 		},
@@ -61,7 +62,7 @@ func newPackReceipt(name, namespace string, signatureVerified bool, driftStatus 
 	return r
 }
 
-func reconcilePI(t *testing.T, r *controller.PackInstanceReconciler, pi *infrav1alpha1.PackInstance) ctrl.Result {
+func reconcilePI(t *testing.T, r *controller.PackInstanceReconciler, pi *seamcorev1alpha1.InfrastructurePackInstance) ctrl.Result {
 	t.Helper()
 	result, err := r.Reconcile(context.Background(), ctrl.Request{
 		NamespacedName: types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace},
@@ -79,7 +80,7 @@ func TestPackInstanceReconciler_NoReceipt(t *testing.T) {
 	pi := newPackInstance("pi-1", "infra-system", "my-pack", "cluster-a")
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(pi).
-		WithStatusSubresource(&infrav1alpha1.PackInstance{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackInstance{}).
 		Build()
 	r := &controller.PackInstanceReconciler{
 		Client:   fakeClient,
@@ -93,11 +94,11 @@ func TestPackInstanceReconciler_NoReceipt(t *testing.T) {
 		t.Errorf("expected RequeueAfter=60s when receipt missing, got %v", result.RequeueAfter)
 	}
 
-	updated := &infrav1alpha1.PackInstance{}
+	updated := &seamcorev1alpha1.InfrastructurePackInstance{}
 	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pi), updated); err != nil {
 		t.Fatalf("get updated PackInstance: %v", err)
 	}
-	progressingCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackInstanceProgressing)
+	progressingCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackInstanceProgressing)
 	if progressingCond == nil || progressingCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected Progressing=True when receipt missing")
 	}
@@ -111,7 +112,7 @@ func TestPackInstanceReconciler_SecurityViolation(t *testing.T) {
 	receipt := newPackReceipt("my-pack-cluster-a", "infra-system", false, "InSync")
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(pi).
-		WithStatusSubresource(&infrav1alpha1.PackInstance{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackInstance{}).
 		Build()
 	if err := fakeClient.Create(context.Background(), receipt); err != nil {
 		t.Fatalf("create PackReceipt: %v", err)
@@ -125,18 +126,18 @@ func TestPackInstanceReconciler_SecurityViolation(t *testing.T) {
 
 	reconcilePI(t, r, pi)
 
-	updated := &infrav1alpha1.PackInstance{}
+	updated := &seamcorev1alpha1.InfrastructurePackInstance{}
 	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pi), updated); err != nil {
 		t.Fatalf("get updated PackInstance: %v", err)
 	}
-	svCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackInstanceSecurityViolation)
+	svCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackInstanceSecurityViolation)
 	if svCond == nil {
 		t.Fatal("expected SecurityViolation condition")
 	}
 	if svCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected SecurityViolation=True, got %v", svCond.Status)
 	}
-	readyCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackInstanceReady)
+	readyCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackInstanceReady)
 	if readyCond == nil || readyCond.Status != metav1.ConditionFalse {
 		t.Errorf("expected Ready=False on security violation")
 	}
@@ -150,7 +151,7 @@ func TestPackInstanceReconciler_DriftDetected(t *testing.T) {
 	receipt := newPackReceipt("my-pack-cluster-a", "infra-system", true, "Drifted")
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(pi).
-		WithStatusSubresource(&infrav1alpha1.PackInstance{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackInstance{}).
 		Build()
 	if err := fakeClient.Create(context.Background(), receipt); err != nil {
 		t.Fatalf("create PackReceipt: %v", err)
@@ -164,15 +165,15 @@ func TestPackInstanceReconciler_DriftDetected(t *testing.T) {
 
 	reconcilePI(t, r, pi)
 
-	updated := &infrav1alpha1.PackInstance{}
+	updated := &seamcorev1alpha1.InfrastructurePackInstance{}
 	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pi), updated); err != nil {
 		t.Fatalf("get updated PackInstance: %v", err)
 	}
-	driftCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackInstanceDrifted)
+	driftCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackInstanceDrifted)
 	if driftCond == nil || driftCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected Drifted=True")
 	}
-	readyCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackInstanceReady)
+	readyCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackInstanceReady)
 	if readyCond == nil || readyCond.Status != metav1.ConditionFalse {
 		t.Errorf("expected Ready=False when drifted")
 	}
@@ -186,7 +187,7 @@ func TestPackInstanceReconciler_InSync(t *testing.T) {
 	receipt := newPackReceipt("my-pack-cluster-a", "infra-system", true, "InSync")
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(pi).
-		WithStatusSubresource(&infrav1alpha1.PackInstance{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackInstance{}).
 		Build()
 	if err := fakeClient.Create(context.Background(), receipt); err != nil {
 		t.Fatalf("create PackReceipt: %v", err)
@@ -200,15 +201,15 @@ func TestPackInstanceReconciler_InSync(t *testing.T) {
 
 	reconcilePI(t, r, pi)
 
-	updated := &infrav1alpha1.PackInstance{}
+	updated := &seamcorev1alpha1.InfrastructurePackInstance{}
 	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pi), updated); err != nil {
 		t.Fatalf("get updated PackInstance: %v", err)
 	}
-	readyCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackInstanceReady)
+	readyCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackInstanceReady)
 	if readyCond == nil || readyCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected Ready=True when in sync")
 	}
-	svCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackInstanceSecurityViolation)
+	svCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackInstanceSecurityViolation)
 	if svCond == nil || svCond.Status != metav1.ConditionFalse {
 		t.Errorf("expected SecurityViolation=False when signature verified")
 	}
@@ -223,24 +224,24 @@ func TestPackInstanceReconciler_DependencyBlock(t *testing.T) {
 	depPI := newPackInstance("dep-pi", "infra-system", "dep-pack", "cluster-a")
 	depPI.Status.Conditions = []metav1.Condition{
 		{
-			Type:               infrav1alpha1.ConditionTypePackInstanceDrifted,
+			Type:               conditions.ConditionTypePackInstanceDrifted,
 			Status:             metav1.ConditionTrue,
-			Reason:             infrav1alpha1.ReasonDriftDetected,
+			Reason:             conditions.ReasonDriftDetected,
 			LastTransitionTime: metav1.Now(),
 		},
 	}
 
 	pi := newPackInstance("pi-blocked", "infra-system", "my-pack", "cluster-a")
 	pi.Spec.DependsOn = []string{"dep-pi"}
-	pi.Spec.DependencyPolicy = &infrav1alpha1.DependencyPolicy{
-		OnDrift: infrav1alpha1.DriftPolicyBlock,
+	pi.Spec.DependencyPolicy = &seamcorev1alpha1.InfrastructureDependencyPolicy{
+		OnDrift: seamcorev1alpha1.InfrastructureDriftPolicyBlock,
 	}
 
 	receipt := newPackReceipt("my-pack-cluster-a", "infra-system", true, "InSync")
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(pi, depPI).
-		WithStatusSubresource(&infrav1alpha1.PackInstance{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackInstance{}).
 		Build()
 	if err := fakeClient.Create(context.Background(), receipt); err != nil {
 		t.Fatalf("create PackReceipt: %v", err)
@@ -254,41 +255,41 @@ func TestPackInstanceReconciler_DependencyBlock(t *testing.T) {
 
 	reconcilePI(t, r, pi)
 
-	updated := &infrav1alpha1.PackInstance{}
+	updated := &seamcorev1alpha1.InfrastructurePackInstance{}
 	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pi), updated); err != nil {
 		t.Fatalf("get updated PackInstance: %v", err)
 	}
-	depBlockedCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackInstanceDependencyBlocked)
+	depBlockedCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackInstanceDependencyBlocked)
 	if depBlockedCond == nil || depBlockedCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected DependencyBlocked=True when dependency is drifted and policy=Block")
 	}
-	readyCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackInstanceReady)
+	readyCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackInstanceReady)
 	if readyCond == nil || readyCond.Status != metav1.ConditionFalse {
 		t.Errorf("expected Ready=False when dependency blocked")
 	}
 }
 
 // newSucceededPackExecution builds a PackExecution with Succeeded=True for use in tests.
-func newSucceededPackExecution(name, namespace, packName, packVersion, clusterRef string) *infrav1alpha1.PackExecution {
-	pe := &infrav1alpha1.PackExecution{
+func newSucceededPackExecution(name, namespace, packName, packVersion, clusterRef string) *seamcorev1alpha1.InfrastructurePackExecution {
+	pe := &seamcorev1alpha1.InfrastructurePackExecution{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 		},
-		Spec: infrav1alpha1.PackExecutionSpec{
-			ClusterPackRef: infrav1alpha1.ClusterPackRef{
+		Spec: seamcorev1alpha1.InfrastructurePackExecutionSpec{
+			ClusterPackRef: seamcorev1alpha1.InfrastructureClusterPackRef{
 				Name:    packName,
 				Version: packVersion,
 			},
 			TargetClusterRef:    clusterRef,
 			AdmissionProfileRef: "rbac-profile",
 		},
-		Status: infrav1alpha1.PackExecutionStatus{
+		Status: seamcorev1alpha1.InfrastructurePackExecutionStatus{
 			Conditions: []metav1.Condition{
 				{
-					Type:               infrav1alpha1.ConditionTypePackExecutionSucceeded,
+					Type:               conditions.ConditionTypePackExecutionSucceeded,
 					Status:             metav1.ConditionTrue,
-					Reason:             infrav1alpha1.ReasonJobSucceeded,
+					Reason:             conditions.ReasonJobSucceeded,
 					LastTransitionTime: metav1.Now(),
 				},
 			},
@@ -308,7 +309,7 @@ func TestPackInstanceReconciler_ReadyWhenPackExecutionSucceeded(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(pi).
-		WithStatusSubresource(&infrav1alpha1.PackInstance{}, &infrav1alpha1.PackExecution{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackInstance{}, &seamcorev1alpha1.InfrastructurePackExecution{}).
 		Build()
 	// Create the PE with status via status subresource.
 	if err := fakeClient.Create(context.Background(), pe); err != nil {
@@ -329,18 +330,18 @@ func TestPackInstanceReconciler_ReadyWhenPackExecutionSucceeded(t *testing.T) {
 		t.Errorf("expected RequeueAfter=60s, got %v", result.RequeueAfter)
 	}
 
-	updated := &infrav1alpha1.PackInstance{}
+	updated := &seamcorev1alpha1.InfrastructurePackInstance{}
 	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pi), updated); err != nil {
 		t.Fatalf("get updated PackInstance: %v", err)
 	}
-	readyCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackInstanceReady)
+	readyCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackInstanceReady)
 	if readyCond == nil {
 		t.Fatal("expected Ready condition on PackInstance")
 	}
 	if readyCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected Ready=True when PackExecution Succeeded=True, got %v", readyCond.Status)
 	}
-	if readyCond.Reason != infrav1alpha1.ReasonPackDelivered {
+	if readyCond.Reason != conditions.ReasonPackDelivered {
 		t.Errorf("expected reason PackDelivered, got %q", readyCond.Reason)
 	}
 	wantMsg := "Pack my-pack v1.2.3 successfully delivered to cluster-a." // version already has v prefix
@@ -357,7 +358,7 @@ func TestPackInstanceReconciler_AwaitingDeliveryWhenNoPackExecution(t *testing.T
 	pi := newPackInstance("pi-awaiting", "infra-system", "my-pack", "cluster-a")
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(pi).
-		WithStatusSubresource(&infrav1alpha1.PackInstance{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackInstance{}).
 		Build()
 
 	r := &controller.PackInstanceReconciler{
@@ -368,11 +369,11 @@ func TestPackInstanceReconciler_AwaitingDeliveryWhenNoPackExecution(t *testing.T
 
 	reconcilePI(t, r, pi)
 
-	updated := &infrav1alpha1.PackInstance{}
+	updated := &seamcorev1alpha1.InfrastructurePackInstance{}
 	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pi), updated); err != nil {
 		t.Fatalf("get updated PackInstance: %v", err)
 	}
-	readyCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackInstanceReady)
+	readyCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackInstanceReady)
 	if readyCond != nil && readyCond.Status == metav1.ConditionTrue {
 		t.Error("expected Ready != True when no PackExecution exists")
 	}
@@ -385,7 +386,7 @@ func TestPackInstanceReconciler_LineageSyncedInitialized(t *testing.T) {
 	pi := newPackInstance("pi-lineage", "infra-system", "my-pack", "cluster-a")
 	fakeClient := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(pi).
-		WithStatusSubresource(&infrav1alpha1.PackInstance{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackInstance{}).
 		Build()
 	r := &controller.PackInstanceReconciler{
 		Client:   fakeClient,
@@ -395,11 +396,11 @@ func TestPackInstanceReconciler_LineageSyncedInitialized(t *testing.T) {
 
 	reconcilePI(t, r, pi)
 
-	updated := &infrav1alpha1.PackInstance{}
+	updated := &seamcorev1alpha1.InfrastructurePackInstance{}
 	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pi), updated); err != nil {
 		t.Fatalf("get updated PackInstance: %v", err)
 	}
-	lineageCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypeLineageSynced)
+	lineageCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypeLineageSynced)
 	if lineageCond == nil {
 		t.Fatal("expected LineageSynced condition initialized on first reconcile")
 	}

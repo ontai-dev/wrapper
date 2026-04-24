@@ -17,7 +17,6 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
 	seamv1alpha1 "github.com/ontai-dev/seam-core/api/v1alpha1"
-	infrav1alpha1 "github.com/ontai-dev/wrapper/api/v1alpha1"
 )
 
 // buildTestScheme returns a scheme with clientgoscheme (includes batch/v1, core/v1)
@@ -27,9 +26,6 @@ func buildTestScheme(t *testing.T) *runtime.Scheme {
 	s := runtime.NewScheme()
 	if err := clientgoscheme.AddToScheme(s); err != nil {
 		t.Fatalf("AddToScheme clientgo: %v", err)
-	}
-	if err := infrav1alpha1.AddToScheme(s); err != nil {
-		t.Fatalf("AddToScheme infrav1alpha1: %v", err)
 	}
 	if err := seamv1alpha1.AddToScheme(s); err != nil {
 		t.Fatalf("AddToScheme seamv1alpha1: %v", err)
@@ -42,8 +38,8 @@ func boolPtr(b bool) *bool { return &b }
 // newSignedCP returns a signed ClusterPack in the given namespace with a stable UID.
 // Status.Signed=true and PackSignature are pre-set so the PackExecutionReconciler
 // signature gate passes without running the ClusterPackReconciler.
-func newSignedCP(name, version, namespace string) *infrav1alpha1.ClusterPack {
-	return &infrav1alpha1.ClusterPack{
+func newSignedCP(name, version, namespace string) *seamv1alpha1.InfrastructureClusterPack {
+	return &seamv1alpha1.InfrastructureClusterPack{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
@@ -52,15 +48,15 @@ func newSignedCP(name, version, namespace string) *infrav1alpha1.ClusterPack {
 				"ontai.dev/pack-signature": "valid-sig==",
 			},
 		},
-		Spec: infrav1alpha1.ClusterPackSpec{
+		Spec: seamv1alpha1.InfrastructureClusterPackSpec{
 			Version: version,
-			RegistryRef: infrav1alpha1.PackRegistryRef{
+			RegistryRef: seamv1alpha1.InfrastructurePackRegistryRef{
 				URL:    "registry.ontai.dev/packs/" + name,
 				Digest: "sha256:abc123",
 			},
 			Checksum: "sha256:def456",
 		},
-		Status: infrav1alpha1.ClusterPackStatus{
+		Status: seamv1alpha1.InfrastructureClusterPackStatus{
 			Signed:        true,
 			PackSignature: "valid-sig==",
 		},
@@ -69,14 +65,14 @@ func newSignedCP(name, version, namespace string) *infrav1alpha1.ClusterPack {
 
 // newPE returns a PackExecution in the given namespace with an ownerReference
 // pointing to the ClusterPack identified by cpName/cpUID.
-func newPE(name, cpName, cpVersion string, cpUID types.UID, clusterRef, profileRef, namespace string) *infrav1alpha1.PackExecution {
-	return &infrav1alpha1.PackExecution{
+func newPE(name, cpName, cpVersion string, cpUID types.UID, clusterRef, profileRef, namespace string) *seamv1alpha1.InfrastructurePackExecution {
+	return &seamv1alpha1.InfrastructurePackExecution{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 			UID:       types.UID("uid-pe-" + name),
 			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion:         infrav1alpha1.GroupVersion.String(),
+				APIVersion:         seamv1alpha1.GroupVersion.String(),
 				Kind:               "ClusterPack",
 				Name:               cpName,
 				UID:                cpUID,
@@ -84,8 +80,8 @@ func newPE(name, cpName, cpVersion string, cpUID types.UID, clusterRef, profileR
 				BlockOwnerDeletion: boolPtr(true),
 			}},
 		},
-		Spec: infrav1alpha1.PackExecutionSpec{
-			ClusterPackRef: infrav1alpha1.ClusterPackRef{
+		Spec: seamv1alpha1.InfrastructurePackExecutionSpec{
+			ClusterPackRef: seamv1alpha1.InfrastructureClusterPackRef{
 				Name:    cpName,
 				Version: cpVersion,
 			},

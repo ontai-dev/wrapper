@@ -14,19 +14,20 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	infrav1alpha1 "github.com/ontai-dev/wrapper/api/v1alpha1"
+	seamcorev1alpha1 "github.com/ontai-dev/seam-core/api/v1alpha1"
+	"github.com/ontai-dev/seam-core/pkg/conditions"
 )
 
 // newClusterPack constructs a minimal valid ClusterPack for testing.
-func newClusterPack(name, namespace string) *infrav1alpha1.ClusterPack {
-	return &infrav1alpha1.ClusterPack{
+func newClusterPack(name, namespace string) *seamcorev1alpha1.InfrastructureClusterPack {
+	return &seamcorev1alpha1.InfrastructureClusterPack{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 		},
-		Spec: infrav1alpha1.ClusterPackSpec{
+		Spec: seamcorev1alpha1.InfrastructureClusterPackSpec{
 			Version: "v1.0.0",
-			RegistryRef: infrav1alpha1.PackRegistryRef{
+			RegistryRef: seamcorev1alpha1.InfrastructurePackRegistryRef{
 				URL:    "registry.example.com/packs/" + name,
 				Digest: "sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abc123",
 			},
@@ -59,7 +60,7 @@ func TestClusterPack_AcceptedByAPIServer_SetsSignaturePending(t *testing.T) {
 
 	// Verify the object persists in etcd.
 	nn := types.NamespacedName{Name: cp.Name, Namespace: ns}
-	got := &infrav1alpha1.ClusterPack{}
+	got := &seamcorev1alpha1.InfrastructureClusterPack{}
 	if err := k8sClient.Get(ctx, nn, got); err != nil {
 		t.Fatalf("ClusterPack not found in etcd after Create: %v", err)
 	}
@@ -68,15 +69,15 @@ func TestClusterPack_AcceptedByAPIServer_SetsSignaturePending(t *testing.T) {
 	// The reconciler sets this condition when no pack signature annotation is
 	// present (the pack has not yet been signed by the management cluster conductor).
 	ok := poll(t, 10*time.Second, func() bool {
-		got := &infrav1alpha1.ClusterPack{}
+		got := &seamcorev1alpha1.InfrastructureClusterPack{}
 		if err := k8sClient.Get(ctx, nn, got); err != nil {
 			return false
 		}
-		c := infrav1alpha1.FindCondition(got.Status.Conditions, infrav1alpha1.ConditionTypeClusterPackSignaturePending)
+		c := conditions.FindCondition(got.Status.Conditions, conditions.ConditionTypeClusterPackSignaturePending)
 		return c != nil && c.Status == metav1.ConditionTrue
 	})
 	if !ok {
-		got := &infrav1alpha1.ClusterPack{}
+		got := &seamcorev1alpha1.InfrastructureClusterPack{}
 		_ = k8sClient.Get(ctx, nn, got)
 		t.Errorf("timed out waiting for SignaturePending=True; conditions: %v", got.Status.Conditions)
 	}
@@ -98,14 +99,14 @@ func TestClusterPack_ObservedGenerationAdvances(t *testing.T) {
 
 	nn := types.NamespacedName{Name: cp.Name, Namespace: ns}
 	ok := poll(t, 10*time.Second, func() bool {
-		got := &infrav1alpha1.ClusterPack{}
+		got := &seamcorev1alpha1.InfrastructureClusterPack{}
 		if err := k8sClient.Get(ctx, nn, got); err != nil {
 			return false
 		}
 		return got.Status.ObservedGeneration == got.Generation && got.Generation > 0
 	})
 	if !ok {
-		got := &infrav1alpha1.ClusterPack{}
+		got := &seamcorev1alpha1.InfrastructureClusterPack{}
 		_ = k8sClient.Get(ctx, nn, got)
 		t.Errorf("timed out: ObservedGeneration=%d Generation=%d",
 			got.Status.ObservedGeneration, got.Generation)
@@ -133,13 +134,13 @@ func TestPackInstance_OwnerRefCascade_DeletedWhenPackExecutionDeleted(t *testing
 	ns := "seam-system"
 
 	// Create the PackExecution owner object manually (no reconciler needed).
-	pe := &infrav1alpha1.PackExecution{
+	pe := &seamcorev1alpha1.InfrastructurePackExecution{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "cascade-owner-pe",
 			Namespace: ns,
 		},
-		Spec: infrav1alpha1.PackExecutionSpec{
-			ClusterPackRef:      infrav1alpha1.ClusterPackRef{Name: "some-pack", Version: "v1.0.0"},
+		Spec: seamcorev1alpha1.InfrastructurePackExecutionSpec{
+			ClusterPackRef:      seamcorev1alpha1.InfrastructureClusterPackRef{Name: "some-pack", Version: "v1.0.0"},
 			TargetClusterRef:    "ccs-test",
 			AdmissionProfileRef: "some-profile",
 		},
@@ -149,7 +150,7 @@ func TestPackInstance_OwnerRefCascade_DeletedWhenPackExecutionDeleted(t *testing
 	}
 
 	// Read back to get the UID for the ownerRef.
-	pePatch := &infrav1alpha1.PackExecution{}
+	pePatch := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := k8sClient.Get(ctx, types.NamespacedName{Name: pe.Name, Namespace: ns}, pePatch); err != nil {
 		t.Fatalf("Get PackExecution UID: %v", err)
 	}
@@ -157,12 +158,12 @@ func TestPackInstance_OwnerRefCascade_DeletedWhenPackExecutionDeleted(t *testing
 	// Create the PackInstance with BlockOwnerDeletion ownerRef to PackExecution.
 	// This mirrors the ownerRef set by PackExecutionReconciler in production.
 	truePtr := true
-	pi := &infrav1alpha1.PackInstance{
+	pi := &seamcorev1alpha1.InfrastructurePackInstance{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "cascade-owned-pi",
 			Namespace: ns,
 			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion:         infrav1alpha1.GroupVersion.String(),
+				APIVersion:         seamcorev1alpha1.GroupVersion.String(),
 				Kind:               "PackExecution",
 				Name:               pePatch.Name,
 				UID:                pePatch.UID,
@@ -170,7 +171,7 @@ func TestPackInstance_OwnerRefCascade_DeletedWhenPackExecutionDeleted(t *testing
 				BlockOwnerDeletion: &truePtr,
 			}},
 		},
-		Spec: infrav1alpha1.PackInstanceSpec{
+		Spec: seamcorev1alpha1.InfrastructurePackInstanceSpec{
 			ClusterPackRef:   "some-pack",
 			TargetClusterRef: "ccs-test",
 		},
@@ -181,7 +182,7 @@ func TestPackInstance_OwnerRefCascade_DeletedWhenPackExecutionDeleted(t *testing
 
 	// Confirm both objects exist.
 	piNN := types.NamespacedName{Name: pi.Name, Namespace: ns}
-	if err := k8sClient.Get(ctx, piNN, &infrav1alpha1.PackInstance{}); err != nil {
+	if err := k8sClient.Get(ctx, piNN, &seamcorev1alpha1.InfrastructurePackInstance{}); err != nil {
 		t.Fatalf("PackInstance not found before cascade test: %v", err)
 	}
 
@@ -194,7 +195,7 @@ func TestPackInstance_OwnerRefCascade_DeletedWhenPackExecutionDeleted(t *testing
 	// Wait for the PackInstance to be cascade-deleted from etcd.
 	// The Kubernetes GC controller runs in the background and may take a moment.
 	ok := poll(t, 20*time.Second, func() bool {
-		err := k8sClient.Get(ctx, piNN, &infrav1alpha1.PackInstance{})
+		err := k8sClient.Get(ctx, piNN, &seamcorev1alpha1.InfrastructurePackInstance{})
 		return apierrors.IsNotFound(err)
 	})
 	if !ok {

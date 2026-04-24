@@ -68,6 +68,24 @@ spec:
                   The 4-gate check verifies this profile has reached provisioned=true.
                 minLength: 1
                 type: string
+              chartName:
+                description: |-
+                  ChartName is the name of the Helm chart being deployed.
+                  Copied from the referenced ClusterPack.spec.chartName at execution time.
+                  Absent for kustomize and raw category packs. Decision B, T-04 schema.
+                type: string
+              chartURL:
+                description: |-
+                  ChartURL is the URL of the Helm chart repository.
+                  Copied from the referenced ClusterPack.spec.chartURL at execution time.
+                  Absent for kustomize and raw category packs. Decision B, T-04 schema.
+                type: string
+              chartVersion:
+                description: |-
+                  ChartVersion is the version of the Helm chart being deployed.
+                  Copied from the referenced ClusterPack.spec.chartVersion at execution time.
+                  Absent for kustomize and raw category packs. Decision B, T-04 schema.
+                type: string
               clusterPackRef:
                 description: ClusterPackRef identifies the ClusterPack to deploy.
                 properties:
@@ -85,6 +103,13 @@ spec:
                 - name
                 - version
                 type: object
+              helmVersion:
+                description: |-
+                  HelmVersion is the version of the Helm SDK used to render the ClusterPack.
+                  Copied from the referenced ClusterPack.spec.helmVersion at execution time.
+                  Ensures rendering reproducibility. Absent for kustomize and raw category packs.
+                  Decision B, T-04 schema.
+                type: string
               lineage:
                 description: |-
                   Lineage is the sealed causal chain record for this root declaration.

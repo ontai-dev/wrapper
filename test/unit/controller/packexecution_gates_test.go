@@ -29,7 +29,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	infrav1alpha1 "github.com/ontai-dev/wrapper/api/v1alpha1"
+	seamcorev1alpha1 "github.com/ontai-dev/seam-core/api/v1alpha1"
+	"github.com/ontai-dev/seam-core/pkg/conditions"
 	"github.com/ontai-dev/wrapper/internal/controller"
 )
 
@@ -48,7 +49,7 @@ func TestAC2_Gate1_PackExecution_BlockedWhenUnsigned(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
-		WithStatusSubresource(&infrav1alpha1.PackExecution{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}).
 		Build()
 	ctx := context.Background()
 	for _, obj := range []client.Object{tc, rc} {
@@ -67,11 +68,11 @@ func TestAC2_Gate1_PackExecution_BlockedWhenUnsigned(t *testing.T) {
 	if result.RequeueAfter == 0 {
 		t.Error("AC-2 gate1: expected requeue when signature pending, got no requeue")
 	}
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := c.Get(ctx, client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("AC-2 gate1: get PackExecution: %v", err)
 	}
-	cond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackSignaturePending)
+	cond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackSignaturePending)
 	if cond == nil || cond.Status != metav1.ConditionTrue {
 		t.Errorf("AC-2 gate1: PackSignaturePending not True when Signed=false; cond=%v", cond)
 	}
@@ -98,7 +99,7 @@ func TestAC2_Gate3_PackExecution_BlockedWhenSnapshotStale(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
-		WithStatusSubresource(&infrav1alpha1.PackExecution{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}).
 		Build()
 	ctx := context.Background()
 	for _, obj := range []client.Object{tc, rc, ps} {
@@ -117,11 +118,11 @@ func TestAC2_Gate3_PackExecution_BlockedWhenSnapshotStale(t *testing.T) {
 	if result.RequeueAfter == 0 {
 		t.Error("AC-2 gate3: expected requeue when snapshot stale, got no requeue")
 	}
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := c.Get(ctx, client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("AC-2 gate3: get PackExecution: %v", err)
 	}
-	cond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePermissionSnapshotOutOfSync)
+	cond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePermissionSnapshotOutOfSync)
 	if cond == nil || cond.Status != metav1.ConditionTrue {
 		t.Errorf("AC-2 gate3: PermissionSnapshotOutOfSync not True when snapshot stale; cond=%v", cond)
 	}
@@ -149,7 +150,7 @@ func TestAC2_Gate4_PackExecution_BlockedWhenRBACNotProvisioned(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
-		WithStatusSubresource(&infrav1alpha1.PackExecution{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}).
 		Build()
 	ctx := context.Background()
 	for _, obj := range []client.Object{tc, rc, ps, rp} {
@@ -168,11 +169,11 @@ func TestAC2_Gate4_PackExecution_BlockedWhenRBACNotProvisioned(t *testing.T) {
 	if result.RequeueAfter == 0 {
 		t.Error("AC-2 gate4: expected requeue when RBACProfile not provisioned, got no requeue")
 	}
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := c.Get(ctx, client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("AC-2 gate4: get PackExecution: %v", err)
 	}
-	cond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypeRBACProfileNotProvisioned)
+	cond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypeRBACProfileNotProvisioned)
 	if cond == nil || cond.Status != metav1.ConditionTrue {
 		t.Errorf("AC-2 gate4: RBACProfileNotProvisioned not True when unprovisioned; cond=%v", cond)
 	}
@@ -192,9 +193,9 @@ func TestAC2_Gate4_PackExecution_BlockedWhenRBACNotProvisioned(t *testing.T) {
 func TestAC2_Gate2_PackExecution_BlockedWhenRevoked(t *testing.T) {
 	s := buildTestScheme(t)
 	cp := newSignedCP("revoked-pack-ac2", "v1.0.0", "infra-system")
-	infrav1alpha1.SetCondition(
+	conditions.SetCondition(
 		&cp.Status.Conditions,
-		infrav1alpha1.ConditionTypeClusterPackRevoked,
+		conditions.ConditionTypeClusterPackRevoked,
 		metav1.ConditionTrue,
 		"ManualRevocation",
 		"Pack revoked by operator.",
@@ -206,7 +207,7 @@ func TestAC2_Gate2_PackExecution_BlockedWhenRevoked(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(cp, pe).
-		WithStatusSubresource(&infrav1alpha1.PackExecution{}).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}).
 		Build()
 	ctx := context.Background()
 	for _, obj := range []client.Object{tc, rc} {
@@ -226,11 +227,11 @@ func TestAC2_Gate2_PackExecution_BlockedWhenRevoked(t *testing.T) {
 	if result.RequeueAfter != 0 {
 		t.Errorf("AC-2 gate2: revoked pack must not requeue, got RequeueAfter=%v", result.RequeueAfter)
 	}
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := c.Get(ctx, client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("AC-2 gate2: get PackExecution: %v", err)
 	}
-	cond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackRevoked)
+	cond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackRevoked)
 	if cond == nil || cond.Status != metav1.ConditionTrue {
 		t.Errorf("AC-2 gate2: PackRevoked not True when ClusterPack is revoked; cond=%v", cond)
 	}
@@ -273,17 +274,17 @@ func TestAC2_AllGatesPass_JobSubmitted(t *testing.T) {
 
 	// No blocking conditions must remain set.
 	ctx := context.Background()
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := c.Get(ctx, client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("AC-2 all-gates: get PackExecution: %v", err)
 	}
 	for _, ct := range []string{
-		infrav1alpha1.ConditionTypePackSignaturePending,
-		infrav1alpha1.ConditionTypePermissionSnapshotOutOfSync,
-		infrav1alpha1.ConditionTypeRBACProfileNotProvisioned,
-		infrav1alpha1.ConditionTypePackRevoked,
+		conditions.ConditionTypePackSignaturePending,
+		conditions.ConditionTypePermissionSnapshotOutOfSync,
+		conditions.ConditionTypeRBACProfileNotProvisioned,
+		conditions.ConditionTypePackRevoked,
 	} {
-		if cond := infrav1alpha1.FindCondition(updated.Status.Conditions, ct); cond != nil && cond.Status == metav1.ConditionTrue {
+		if cond := conditions.FindCondition(updated.Status.Conditions, ct); cond != nil && cond.Status == metav1.ConditionTrue {
 			t.Errorf("AC-2 all-gates: blocking condition %q is True after all gates pass", ct)
 		}
 	}

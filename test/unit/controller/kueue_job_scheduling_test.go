@@ -28,14 +28,15 @@ import (
 	clientevents "k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	infrav1alpha1 "github.com/ontai-dev/wrapper/api/v1alpha1"
+	seamcorev1alpha1 "github.com/ontai-dev/seam-core/api/v1alpha1"
+	"github.com/ontai-dev/seam-core/pkg/conditions"
 	"github.com/ontai-dev/wrapper/internal/controller"
 )
 
 // jobSubmissionSetup returns a fake client with all five gates satisfied and no
 // pre-existing Job. The returned PackExecution and ClusterPack can be inspected
 // after reconcile to verify Job labels and env vars.
-func jobSubmissionSetup(t *testing.T) (client.Client, *infrav1alpha1.PackExecution) {
+func jobSubmissionSetup(t *testing.T) (client.Client, *seamcorev1alpha1.InfrastructurePackExecution) {
 	t.Helper()
 	return allGatesSetup(t, "pe-job", "cilium-pack", "v1.2.3", "cluster-g", "profile-g")
 }
@@ -288,31 +289,31 @@ func TestJobFailed_PackExecutionFailed(t *testing.T) {
 		t.Errorf("expected no requeue after Job failure (human intervention required), got %+v", result)
 	}
 
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("get PackExecution: %v", err)
 	}
 
 	// PackExecutionFailed=True with JobFailed reason.
-	failedCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionFailed)
+	failedCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackExecutionFailed)
 	if failedCond == nil {
 		t.Fatal("PackExecutionFailed condition not set after Job failure")
 	}
 	if failedCond.Status != metav1.ConditionTrue {
 		t.Errorf("PackExecutionFailed=%s, want True", failedCond.Status)
 	}
-	if failedCond.Reason != infrav1alpha1.ReasonJobFailed {
-		t.Errorf("PackExecutionFailed reason=%q, want %q", failedCond.Reason, infrav1alpha1.ReasonJobFailed)
+	if failedCond.Reason != conditions.ReasonJobFailed {
+		t.Errorf("PackExecutionFailed reason=%q, want %q", failedCond.Reason, conditions.ReasonJobFailed)
 	}
 
 	// Running condition must not be True.
-	runningCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionRunning)
+	runningCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackExecutionRunning)
 	if runningCond != nil && runningCond.Status == metav1.ConditionTrue {
 		t.Error("Running must not be True when Job has failed")
 	}
 
 	// Succeeded must not be True.
-	succeededCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionSucceeded)
+	succeededCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackExecutionSucceeded)
 	if succeededCond != nil && succeededCond.Status == metav1.ConditionTrue {
 		t.Error("Succeeded must not be True when Job has failed")
 	}
@@ -358,13 +359,13 @@ func TestJobSucceeded_PackExecutionSucceeded(t *testing.T) {
 		t.Errorf("expected no requeue after success, got %+v", result)
 	}
 
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("get PackExecution: %v", err)
 	}
 
 	// Succeeded=True.
-	succeededCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionSucceeded)
+	succeededCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackExecutionSucceeded)
 	if succeededCond == nil || succeededCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected Succeeded=True, got %+v", succeededCond)
 	}
@@ -377,7 +378,7 @@ func TestJobSucceeded_PackExecutionSucceeded(t *testing.T) {
 
 	// PackInstance created in seam-tenant-{clusterRef} (explicit per wrapper-schema.md §9).
 	piName := cpName + "-" + clusterRef
-	pi := &infrav1alpha1.PackInstance{}
+	pi := &seamcorev1alpha1.InfrastructurePackInstance{}
 	if err := fakeClient.Get(ctx, types.NamespacedName{Name: piName, Namespace: "seam-tenant-" + clusterRef}, pi); err != nil {
 		t.Fatalf("PackInstance %q not created after Job success: %v", piName, err)
 	}
@@ -441,11 +442,11 @@ func TestIdempotency_RunningJob_NoNewJob(t *testing.T) {
 	}
 
 	// PackExecution Running=True.
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(pe), updated); err != nil {
 		t.Fatalf("get PackExecution: %v", err)
 	}
-	runningCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionRunning)
+	runningCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackExecutionRunning)
 	if runningCond == nil || runningCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected Running=True while Job is running, got %+v", runningCond)
 	}
