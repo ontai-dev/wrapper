@@ -74,6 +74,3 @@ var _ = BeforeSuite(func() {
 	registry = e2ehelpers.NewRegistryClient(registryAddr)
 })
 
-var _ = It("placeholder — lab cluster not yet provisioned", func() {
-	Skip("lab cluster not yet provisioned")
-})
