@@ -104,6 +104,30 @@ type PackInstanceSpec struct {
 	// +optional
 	DependencyPolicy *DependencyPolicy `json:"dependencyPolicy,omitempty"`
 
+	// ChartVersion is the version of the Helm chart delivered for this PackInstance.
+	// Copied from ClusterPack.spec.chartVersion at creation time.
+	// Absent for kustomize and raw category packs. Decision B, T-04 schema.
+	// +optional
+	ChartVersion string `json:"chartVersion,omitempty"`
+
+	// ChartURL is the URL of the Helm chart repository.
+	// Copied from ClusterPack.spec.chartURL at creation time.
+	// Absent for kustomize and raw category packs. Decision B, T-04 schema.
+	// +optional
+	ChartURL string `json:"chartURL,omitempty"`
+
+	// ChartName is the name of the Helm chart delivered.
+	// Copied from ClusterPack.spec.chartName at creation time.
+	// Absent for kustomize and raw category packs. Decision B, T-04 schema.
+	// +optional
+	ChartName string `json:"chartName,omitempty"`
+
+	// HelmVersion is the version of the Helm SDK used to render the ClusterPack.
+	// Copied from ClusterPack.spec.helmVersion at creation time.
+	// Absent for kustomize and raw category packs. Decision B, T-04 schema.
+	// +optional
+	HelmVersion string `json:"helmVersion,omitempty"`
+
 	// Lineage is the sealed causal chain record for this root declaration.
 	// Authored once at object creation time and immutable thereafter.
 	// seam-core-schema.md §5, CLAUDE.md §14 Decision 1.
