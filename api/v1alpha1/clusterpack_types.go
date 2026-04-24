@@ -156,6 +156,32 @@ type ClusterPackSpec struct {
 	// +optional
 	TargetClusters []string `json:"targetClusters,omitempty"`
 
+	// ChartVersion is the version of the Helm chart used to compile this ClusterPack.
+	// Populated by the Compiler for helm category packs. Absent for kustomize and raw.
+	// Decision B, T-04 schema.
+	// +optional
+	ChartVersion string `json:"chartVersion,omitempty"`
+
+	// ChartURL is the URL of the Helm chart repository used to compile this ClusterPack.
+	// Populated by the Compiler for helm category packs. Absent for kustomize and raw.
+	// Decision B, T-04 schema.
+	// +optional
+	ChartURL string `json:"chartURL,omitempty"`
+
+	// ChartName is the name of the Helm chart (e.g., "nginx-ingress").
+	// Populated by the Compiler for helm category packs. Absent for kustomize and raw.
+	// Decision B, T-04 schema.
+	// +optional
+	ChartName string `json:"chartName,omitempty"`
+
+	// HelmVersion is the version of the Helm SDK used to render this ClusterPack.
+	// Records the helm.sh/helm/v3 module version embedded in the Compiler binary.
+	// Ensures rendering reproducibility across SDK versions.
+	// Populated by the Compiler for helm category packs. Absent for kustomize and raw.
+	// Decision B, T-04 schema.
+	// +optional
+	HelmVersion string `json:"helmVersion,omitempty"`
+
 	// Lineage is the sealed causal chain record for this root declaration.
 	// Authored once at object creation time and immutable thereafter.
 	// The admission webhook rejects any update that modifies this field after creation.

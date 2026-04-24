@@ -93,6 +93,31 @@ type PackExecutionSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	AdmissionProfileRef string `json:"admissionProfileRef"`
 
+	// ChartVersion is the version of the Helm chart being deployed.
+	// Copied from the referenced ClusterPack.spec.chartVersion at execution time.
+	// Absent for kustomize and raw category packs. Decision B, T-04 schema.
+	// +optional
+	ChartVersion string `json:"chartVersion,omitempty"`
+
+	// ChartURL is the URL of the Helm chart repository.
+	// Copied from the referenced ClusterPack.spec.chartURL at execution time.
+	// Absent for kustomize and raw category packs. Decision B, T-04 schema.
+	// +optional
+	ChartURL string `json:"chartURL,omitempty"`
+
+	// ChartName is the name of the Helm chart being deployed.
+	// Copied from the referenced ClusterPack.spec.chartName at execution time.
+	// Absent for kustomize and raw category packs. Decision B, T-04 schema.
+	// +optional
+	ChartName string `json:"chartName,omitempty"`
+
+	// HelmVersion is the version of the Helm SDK used to render the ClusterPack.
+	// Copied from the referenced ClusterPack.spec.helmVersion at execution time.
+	// Ensures rendering reproducibility. Absent for kustomize and raw category packs.
+	// Decision B, T-04 schema.
+	// +optional
+	HelmVersion string `json:"helmVersion,omitempty"`
+
 	// Lineage is the sealed causal chain record for this root declaration.
 	// Authored once at object creation time and immutable thereafter.
 	// seam-core-schema.md §5, CLAUDE.md §14 Decision 1.
