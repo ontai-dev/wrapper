@@ -43,8 +43,10 @@ const (
 	// The queue lives in the same namespace as the PackExecution (seam-tenant-{cluster}).
 	packDeployQueue = "pack-deploy-queue"
 
-	// operationResultCMPrefix is used to build the ConfigMap name for OperationResult.
-	operationResultCMPrefix = "pack-deploy-result-"
+	// labelPackExecution is the label key used by the single-active-revision POR
+	// pattern (conductor T-15). List queries use this label to find the active POR
+	// for a given PackExecution. seam-core-schema.md §8.
+	labelPackExecution = "ontai.dev/pack-execution"
 
 	// packDeployJobTTL is the TTL seconds after a pack-deploy Job finishes.
 	// The Job is deleted 600 seconds after completion. wrapper-design.md §4.
@@ -391,17 +393,16 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		// Check if Job has completed.
 		if existingJob.Status.Succeeded > 0 {
 			// Step I — Read PackOperationResult CR written by Conductor Job.
-			resultName := operationResultCMPrefix + pe.Name
-			resultPOR := &seamv1alpha1.PackOperationResult{}
-			resultKey := client.ObjectKey{Name: resultName, Namespace: pe.Namespace}
-			if err := r.Client.Get(ctx, resultKey, resultPOR); err != nil {
-				if apierrors.IsNotFound(err) {
-					// Job succeeded but PackOperationResult not yet written — requeue briefly.
-					return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-				}
-				return ctrl.Result{}, fmt.Errorf("failed to get PackOperationResult %q: %w", resultName, err)
+			// Single-active-revision pattern (T-15): list by label, pick highest revision.
+			resultPOR, err := findLatestPOR(ctx, r.Client, pe.Namespace, pe.Name)
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to find PackOperationResult for %q: %w", pe.Name, err)
 			}
-			pe.Status.OperationResultRef = resultName
+			if resultPOR == nil {
+				// Job succeeded but PackOperationResult not yet written — requeue briefly.
+				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			}
+			pe.Status.OperationResultRef = resultPOR.Name
 
 			// Attach PackExecution OwnerReference so the PackOperationResult is
 			// garbage-collected when the PackExecution is deleted. Idempotent.
@@ -424,7 +425,7 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				})
 				if patchErr := r.Client.Patch(ctx, resultPOR, porPatch); patchErr != nil {
 					logger.Error(patchErr, "failed to patch PackOperationResult with PackExecution owner reference",
-						"porName", resultName)
+						"porName", resultPOR.Name)
 				}
 			}
 
@@ -456,7 +457,7 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				)
 				r.Recorder.Eventf(pe, nil, corev1.EventTypeWarning, "CapabilityFailed", "CapabilityFailed", failMsg)
 				logger.Info("PackExecution capability failed",
-					"name", pe.Name, "jobName", jobName, "resultPOR", resultName,
+					"name", pe.Name, "jobName", jobName, "resultPOR", resultPOR.Name,
 					"failedStep", func() string {
 						if porFailureReason != nil {
 							return porFailureReason.FailedStep
@@ -483,7 +484,7 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				)
 				r.Recorder.Eventf(pe, nil, corev1.EventTypeNormal, "Succeeded", "Succeeded", "pack-deploy Job completed successfully.")
 				logger.Info("PackExecution succeeded",
-					"name", pe.Name, "jobName", jobName, "resultPOR", resultName)
+					"name", pe.Name, "jobName", jobName, "resultPOR", resultPOR.Name)
 			}
 
 			// Step I.b — Create PackInstance only on capability success.
@@ -790,7 +791,11 @@ func (r *PackExecutionReconciler) buildPackDeployJob(
 	ttl := packDeployJobTTL
 	conductorImage := conductorImageDefault
 
-	resultCMName := operationResultCMPrefix + pe.Name
+	// resultCMName is the packExecutionRef passed to the Conductor Job via
+	// OPERATION_RESULT_CM. Conductor uses this value as the label key for
+	// the single-active-revision POR pattern (T-15). pe.Name is the PackExecution
+	// CR name, which is the natural packExecutionRef.
+	resultCMName := pe.Name
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1032,4 +1037,32 @@ func (r *PackExecutionReconciler) mapRBACProfileToPackExecutions(
 		}
 	}
 	return requests
+}
+
+// findLatestPOR lists all PackOperationResult CRs in namespace that carry the
+// label ontai.dev/pack-execution={packExecutionRef} and returns the one with the
+// highest Revision. Returns nil (not an error) when no POR exists yet.
+// Implements the single-active-revision read path (T-16). seam-core-schema.md §8.
+func findLatestPOR(
+	ctx context.Context,
+	c client.Client,
+	namespace, packExecutionRef string,
+) (*seamv1alpha1.PackOperationResult, error) {
+	list := &seamv1alpha1.PackOperationResultList{}
+	if err := c.List(ctx, list,
+		client.InNamespace(namespace),
+		client.MatchingLabels{labelPackExecution: packExecutionRef},
+	); err != nil {
+		return nil, fmt.Errorf("findLatestPOR: list %q in %q: %w", packExecutionRef, namespace, err)
+	}
+	if len(list.Items) == 0 {
+		return nil, nil
+	}
+	best := &list.Items[0]
+	for i := 1; i < len(list.Items); i++ {
+		if list.Items[i].Spec.Revision > best.Spec.Revision {
+			best = &list.Items[i]
+		}
+	}
+	return best, nil
 }

@@ -141,8 +141,9 @@ func TestJobSubmission_PackArtifactRefEnvVars(t *testing.T) {
 		t.Errorf("PACK_SIGNATURE=%q, want valid-sig==", v)
 	}
 
-	// OPERATION_RESULT_CM is set to the deterministic result CM name.
-	expectedCM := "pack-deploy-result-" + pe.Name
+	// OPERATION_RESULT_CM carries the packExecutionRef (pe.Name) so conductor can
+	// label the POR and the reconciler can list it by label (T-15/T-16).
+	expectedCM := pe.Name
 	if v := envMap["OPERATION_RESULT_CM"]; v != expectedCM {
 		t.Errorf("OPERATION_RESULT_CM=%q, want %q", v, expectedCM)
 	}
@@ -368,8 +369,8 @@ func TestJobSucceeded_PackExecutionSucceeded(t *testing.T) {
 		t.Errorf("expected Succeeded=True, got %+v", succeededCond)
 	}
 
-	// OperationResultRef set.
-	expectedRef := "pack-deploy-result-" + peName
+	// OperationResultRef set to the actual POR name (revision-suffixed, T-16).
+	expectedRef := "pack-deploy-result-" + peName + "-r1"
 	if updated.Status.OperationResultRef != expectedRef {
 		t.Errorf("OperationResultRef=%q, want %q", updated.Status.OperationResultRef, expectedRef)
 	}

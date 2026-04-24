@@ -202,15 +202,20 @@ func newJob(name, namespace string, succeeded, failed int32) *batchv1.Job {
 }
 
 // newOperationResultPOR returns a PackOperationResult CR written by the
-// conductor executor after pack-deploy Job success. Name follows the convention
-// "pack-deploy-result-{peName}".
+// conductor executor after pack-deploy Job success. Uses the single-active-revision
+// naming convention (T-15): name is "pack-deploy-result-{peName}-r1", labelled with
+// ontai.dev/pack-execution={peName}, Revision=1.
 func newOperationResultPOR(peName, namespace string) *seamv1alpha1.PackOperationResult {
 	return &seamv1alpha1.PackOperationResult{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "pack-deploy-result-" + peName,
+			Name:      "pack-deploy-result-" + peName + "-r1",
 			Namespace: namespace,
+			Labels: map[string]string{
+				"ontai.dev/pack-execution": peName,
+			},
 		},
 		Spec: seamv1alpha1.PackOperationResultSpec{
+			Revision:   1,
 			Capability: "pack-deploy",
 			Status:     seamv1alpha1.PackResultSucceeded,
 		},
