@@ -146,9 +146,9 @@ func TestOwnershipChain_TalosClusterExists(t *testing.T) {
 	if succeededCond.Status != metav1.ConditionTrue {
 		t.Errorf("PackExecution Succeeded=%s, want True", succeededCond.Status)
 	}
-	if updated.Status.OperationResultRef != "pack-deploy-result-"+peName {
+	if updated.Status.OperationResultRef != "pack-deploy-result-"+peName+"-r1" {
 		t.Errorf("OperationResultRef=%q, want %q",
-			updated.Status.OperationResultRef, "pack-deploy-result-"+peName)
+			updated.Status.OperationResultRef, "pack-deploy-result-"+peName+"-r1")
 	}
 
 	// Assertion 3: PackInstance created in seam-tenant-{clusterRef} (explicit per schema).
