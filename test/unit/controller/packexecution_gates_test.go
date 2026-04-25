@@ -61,6 +61,7 @@ func TestAC2_Gate1_PackExecution_BlockedWhenUnsigned(t *testing.T) {
 		Client:   c,
 		Scheme:   s,
 		Recorder: clientevents.NewFakeRecorder(16),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	result := reconcilePackExecution(t, r, "pe-ac2-gate1", "infra-system")
@@ -111,6 +112,7 @@ func TestAC2_Gate3_PackExecution_BlockedWhenSnapshotStale(t *testing.T) {
 		Client:   c,
 		Scheme:   s,
 		Recorder: clientevents.NewFakeRecorder(16),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	result := reconcilePackExecution(t, r, "pe-ac2-gate3", "infra-system")
@@ -162,6 +164,7 @@ func TestAC2_Gate4_PackExecution_BlockedWhenRBACNotProvisioned(t *testing.T) {
 		Client:   c,
 		Scheme:   s,
 		Recorder: clientevents.NewFakeRecorder(16),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	result := reconcilePackExecution(t, r, "pe-ac2-gate4", "infra-system")
@@ -219,6 +222,7 @@ func TestAC2_Gate2_PackExecution_BlockedWhenRevoked(t *testing.T) {
 		Client:   c,
 		Scheme:   s,
 		Recorder: clientevents.NewFakeRecorder(16),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	result := reconcilePackExecution(t, r, "pe-ac2-gate2", "infra-system")
@@ -254,6 +258,7 @@ func TestAC2_AllGatesPass_JobSubmitted(t *testing.T) {
 		Client:   c,
 		Scheme:   buildTestScheme(t),
 		Recorder: clientevents.NewFakeRecorder(16),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	result := reconcilePackExecution(t, r, "pe-ac2-all", "infra-system")

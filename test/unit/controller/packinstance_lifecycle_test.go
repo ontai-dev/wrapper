@@ -100,7 +100,7 @@ func TestOwnershipChain_TalosClusterExists(t *testing.T) {
 	ctx := context.Background()
 
 	// Add succeeded Job and PackOperationResult CR.
-	job := newJob(packDeployJobName(peName), "infra-system", 1, 0)
+	job := newJob(packDeployJobName(peName), "infra-system", 1, 0, pe)
 	por := newOperationResultPOR(peName, "infra-system")
 	if err := fakeClient.Create(ctx, job); err != nil {
 		t.Fatalf("create Job: %v", err)
@@ -113,6 +113,7 @@ func TestOwnershipChain_TalosClusterExists(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   buildTestScheme(t),
 		Recorder: clientevents.NewFakeRecorder(32),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	// Assertion 1: ownership chain structure — PE has ownerRef to CP.
@@ -208,6 +209,7 @@ func TestWaitingForCluster_TalosClusterAbsent(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   s,
 		Recorder: clientevents.NewFakeRecorder(32),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	result := reconcilePackExecution(t, r, peName, "infra-system")
@@ -265,6 +267,7 @@ func TestDeletion_PackExecutionNotFound_NoJobCreated(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   s,
 		Recorder: clientevents.NewFakeRecorder(32),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	result, err := r.Reconcile(context.Background(), ctrl.Request{
@@ -367,6 +370,7 @@ func TestGate0_RunnerConfigAbsent(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   s,
 		Recorder: clientevents.NewFakeRecorder(32),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	result := reconcilePackExecution(t, r, peName, "infra-system")
@@ -431,6 +435,7 @@ func TestGate1_SignaturePending(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   s,
 		Recorder: clientevents.NewFakeRecorder(32),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	result := reconcilePackExecution(t, r, peName, "infra-system")
@@ -502,6 +507,7 @@ func TestGate2_PackRevoked(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   s,
 		Recorder: clientevents.NewFakeRecorder(32),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	result := reconcilePackExecution(t, r, peName, "infra-system")
@@ -563,6 +569,7 @@ func TestGate3_PermissionSnapshotOutOfSync(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   s,
 		Recorder: clientevents.NewFakeRecorder(32),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	result := reconcilePackExecution(t, r, peName, "infra-system")
@@ -626,6 +633,7 @@ func TestGate4_RBACProfileNotProvisioned(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   s,
 		Recorder: clientevents.NewFakeRecorder(32),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	result := reconcilePackExecution(t, r, peName, "infra-system")
@@ -694,7 +702,7 @@ func TestConductorReady_ManagementClusterFallback_SeamSystem(t *testing.T) {
 	}
 
 	// Add a running Job so reconcile advances past all gates.
-	job := newJob(packDeployJobName(peName), "infra-system", 0, 0)
+	job := newJob(packDeployJobName(peName), "infra-system", 0, 0, pe)
 	if err := fakeClient.Create(ctx, job); err != nil {
 		t.Fatalf("create Job: %v", err)
 	}
@@ -703,6 +711,7 @@ func TestConductorReady_ManagementClusterFallback_SeamSystem(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   s,
 		Recorder: clientevents.NewFakeRecorder(32),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	reconcilePackExecution(t, r, peName, "infra-system")
@@ -735,7 +744,7 @@ func TestConductorReady_RunnerConfigWithCapabilities_ReturnsTrue(t *testing.T) {
 	ctx := context.Background()
 
 	// Add running Job so we can observe gate 0 cleared (reconcile reaches step H).
-	job := newJob(packDeployJobName(peName), "infra-system", 0, 0)
+	job := newJob(packDeployJobName(peName), "infra-system", 0, 0, pe)
 	if err := fakeClient.Create(ctx, job); err != nil {
 		t.Fatalf("create Job: %v", err)
 	}
@@ -744,6 +753,7 @@ func TestConductorReady_RunnerConfigWithCapabilities_ReturnsTrue(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   buildTestScheme(t),
 		Recorder: clientevents.NewFakeRecorder(32),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	reconcilePackExecution(t, r, peName, "infra-system")
@@ -791,6 +801,7 @@ func TestConductorReady_RunnerConfigAbsent_ReturnsFalse(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   s,
 		Recorder: clientevents.NewFakeRecorder(32),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	result := reconcilePackExecution(t, r, peName, "infra-system")
@@ -848,6 +859,7 @@ func TestConductorReady_RunnerConfigEmptyCapabilities_ReturnsFalse(t *testing.T)
 		Client:   fakeClient,
 		Scheme:   s,
 		Recorder: clientevents.NewFakeRecorder(32),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	result := reconcilePackExecution(t, r, peName, "infra-system")

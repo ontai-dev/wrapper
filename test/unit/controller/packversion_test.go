@@ -31,7 +31,7 @@ func deployPack(t *testing.T, cpVersion, existingPIVersion string) string {
 		peNS       = "infra-system"
 	)
 
-	fakeClient, _ := allGatesSetup(t, peName, cpName, cpVersion, clusterRef, profileRef)
+	fakeClient, pe := allGatesSetup(t, peName, cpName, cpVersion, clusterRef, profileRef)
 
 	// If a previous PackInstance version is given, pre-create one to simulate
 	// an existing deployment (basePackName supersession path).
@@ -55,7 +55,7 @@ func deployPack(t *testing.T, cpVersion, existingPIVersion string) string {
 		}
 	}
 
-	succeededJob := newJob(packDeployJobName(peName), peNS, 1, 0)
+	succeededJob := newJob(packDeployJobName(peName), peNS, 1, 0, pe)
 	por := newOperationResultPOR(peName, peNS)
 	if err := fakeClient.Create(ctx, succeededJob); err != nil {
 		t.Fatalf("create Job: %v", err)
@@ -68,6 +68,7 @@ func deployPack(t *testing.T, cpVersion, existingPIVersion string) string {
 		Client:   fakeClient,
 		Scheme:   buildTestScheme(t),
 		Recorder: clientevents.NewFakeRecorder(32),
+		RBACChecker: rbacAllowedStub,
 	}
 	reconcilePackExecution(t, r, peName, peNS)
 

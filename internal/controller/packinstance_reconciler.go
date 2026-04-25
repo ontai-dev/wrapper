@@ -32,7 +32,7 @@ const driftCheckInterval = 60 * time.Second
 // non-empty DeployedResources list. The deletion handler removes all deployed
 // resources from the target cluster before allowing the PackInstance to be deleted.
 // INV-006: no Jobs on the delete path. wrapper-schema.md §3, Decision 11.
-const workloadCleanupFinalizer = "infra.ontai.dev/workload-cleanup"
+const workloadCleanupFinalizer = "infrastructure.ontai.dev/workload-cleanup"
 
 // PackInstanceReconciler watches PackInstance CRs and reflects drift state from
 // the target cluster conductor's PackReceipt.
@@ -62,10 +62,10 @@ type PackInstanceReconciler struct {
 
 // Reconcile is the main reconciliation loop for PackInstance.
 //
-// +kubebuilder:rbac:groups=infra.ontai.dev,resources=packinstances,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=infra.ontai.dev,resources=packinstances/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=infra.ontai.dev,resources=packinstances/finalizers,verbs=update
-// +kubebuilder:rbac:groups=infra.ontai.dev,resources=packexecutions,verbs=get;list;watch
+// +kubebuilder:rbac:groups=infrastructure.ontai.dev,resources=infrastructurepackinstances,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=infrastructure.ontai.dev,resources=infrastructurepackinstances/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=infrastructure.ontai.dev,resources=infrastructurepackinstances/finalizers,verbs=update
+// +kubebuilder:rbac:groups=infrastructure.ontai.dev,resources=infrastructurepackexecutions,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 func (r *PackInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -373,9 +373,9 @@ func (r *PackInstanceReconciler) findSucceededPackExecution(
 func (r *PackInstanceReconciler) getPackReceipt(ctx context.Context, name, namespace string) (*unstructured.Unstructured, error) {
 	receipt := &unstructured.Unstructured{}
 	receipt.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "runner.ontai.dev",
+		Group:   "infrastructure.ontai.dev",
 		Version: "v1alpha1",
-		Kind:    "PackReceipt",
+		Kind:    "InfrastructurePackReceipt",
 	})
 	key := types.NamespacedName{Name: name, Namespace: namespace}
 	if err := r.Client.Get(ctx, key, receipt); err != nil {

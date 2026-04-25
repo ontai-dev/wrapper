@@ -41,10 +41,10 @@ func TestFindLatestPOR_SingleResult(t *testing.T) {
 		profile = "profile-lookup"
 	)
 
-	fakeClient, _ := allGatesSetup(t, peName, cpName, version, cluster, profile)
+	fakeClient, pe := allGatesSetup(t, peName, cpName, version, cluster, profile)
 	ctx := context.Background()
 
-	succeededJob := newJob(packDeployJobName(peName), "infra-system", 1, 0)
+	succeededJob := newJob(packDeployJobName(peName), "infra-system", 1, 0, pe)
 	por := makePOR("pack-deploy-result-"+peName+"-r1", "infra-system", peName, 1, seamv1alpha1.PackResultSucceeded)
 	if err := fakeClient.Create(ctx, succeededJob); err != nil {
 		t.Fatalf("create Job: %v", err)
@@ -57,6 +57,7 @@ func TestFindLatestPOR_SingleResult(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   buildTestScheme(t),
 		Recorder: clientevents.NewFakeRecorder(32),
+		RBACChecker: rbacAllowedStub,
 	}
 	reconcilePackExecution(t, r, peName, "infra-system")
 
@@ -81,10 +82,10 @@ func TestFindLatestPOR_MultipleRevisions(t *testing.T) {
 		profile = "profile-multi"
 	)
 
-	fakeClient, _ := allGatesSetup(t, peName, cpName, version, cluster, profile)
+	fakeClient, pe := allGatesSetup(t, peName, cpName, version, cluster, profile)
 	ctx := context.Background()
 
-	succeededJob := newJob(packDeployJobName(peName), "infra-system", 1, 0)
+	succeededJob := newJob(packDeployJobName(peName), "infra-system", 1, 0, pe)
 	por1 := makePOR("pack-deploy-result-"+peName+"-r1", "infra-system", peName, 1, seamv1alpha1.PackResultFailed)
 	por2 := makePOR("pack-deploy-result-"+peName+"-r2", "infra-system", peName, 2, seamv1alpha1.PackResultSucceeded)
 	if err := fakeClient.Create(ctx, succeededJob); err != nil {
@@ -100,6 +101,7 @@ func TestFindLatestPOR_MultipleRevisions(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   buildTestScheme(t),
 		Recorder: clientevents.NewFakeRecorder(32),
+		RBACChecker: rbacAllowedStub,
 	}
 	reconcilePackExecution(t, r, peName, "infra-system")
 
@@ -123,10 +125,10 @@ func TestFindLatestPOR_NoPOR(t *testing.T) {
 		profile = "profile-nopor"
 	)
 
-	fakeClient, _ := allGatesSetup(t, peName, cpName, version, cluster, profile)
+	fakeClient, pe := allGatesSetup(t, peName, cpName, version, cluster, profile)
 	ctx := context.Background()
 
-	succeededJob := newJob(packDeployJobName(peName), "infra-system", 1, 0)
+	succeededJob := newJob(packDeployJobName(peName), "infra-system", 1, 0, pe)
 	if err := fakeClient.Create(ctx, succeededJob); err != nil {
 		t.Fatalf("create Job: %v", err)
 	}
@@ -135,6 +137,7 @@ func TestFindLatestPOR_NoPOR(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   buildTestScheme(t),
 		Recorder: clientevents.NewFakeRecorder(32),
+		RBACChecker: rbacAllowedStub,
 	}
 	result := reconcilePackExecution(t, r, peName, "infra-system")
 

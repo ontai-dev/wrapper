@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	authorizationv1 "k8s.io/api/authorization/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -94,21 +95,29 @@ const (
 // not a pack-level prerequisite. A cluster without an Available Conductor cannot
 // safely receive any pack delivery regardless of pack signature or RBAC state.
 // platform-schema.md §12, Gap 27.
+// RBACReadyChecker is the function signature for gate 5 RBAC checks.
+// In production, the reconciler uses isWrapperRunnerRBACReady (SubjectAccessReview).
+// In tests, set RBACChecker to a stub that returns (true, "", nil) to bypass the gate.
+type RBACReadyChecker func(ctx context.Context, pe *seamv1alpha1.InfrastructurePackExecution) (bool, string, error)
+
 type PackExecutionReconciler struct {
 	Client   client.Client
 	Scheme   *runtime.Scheme
 	Recorder clientevents.EventRecorder
+	// RBACChecker overrides gate 5 (SubjectAccessReview) for testing. Nil in production.
+	RBACChecker RBACReadyChecker
 }
 
 // Reconcile is the main reconciliation loop for PackExecution.
 //
-// +kubebuilder:rbac:groups=infra.ontai.dev,resources=packexecutions,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=infra.ontai.dev,resources=packexecutions/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=infra.ontai.dev,resources=packexecutions/finalizers,verbs=update
-// +kubebuilder:rbac:groups=infra.ontai.dev,resources=clusterpacks,verbs=get;list;watch
+// +kubebuilder:rbac:groups=infrastructure.ontai.dev,resources=infrastructurepackexecutions,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=infrastructure.ontai.dev,resources=infrastructurepackexecutions/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=infrastructure.ontai.dev,resources=infrastructurepackexecutions/finalizers,verbs=update
+// +kubebuilder:rbac:groups=infrastructure.ontai.dev,resources=infrastructureclusterpacks,verbs=get;list;watch
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=authorization.k8s.io,resources=subjectaccessreviews,verbs=create
 func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
@@ -366,6 +375,47 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		pe.Generation,
 	)
 
+	// Gate 5: WrapperRunnerRBAC gate.
+	// SubjectAccessReview verifies wrapper-runner SA has required permissions
+	// before submitting the Job. Catches stale or missing RBAC before runtime failure.
+	rbacCheckFn := r.isWrapperRunnerRBACReady
+	if r.RBACChecker != nil {
+		rbacCheckFn = r.RBACChecker
+	}
+	rbacSARReady, rbacSARDenyReason, err := rbacCheckFn(ctx, pe)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to check wrapper-runner RBAC: %w", err)
+	}
+	if !rbacSARReady {
+		conditions.SetCondition(
+			&pe.Status.Conditions,
+			conditions.ConditionTypeWrapperRunnerRBACNotReady,
+			metav1.ConditionTrue,
+			conditions.ReasonWrapperRunnerRBACNotReady,
+			rbacSARDenyReason,
+			pe.Generation,
+		)
+		conditions.SetCondition(
+			&pe.Status.Conditions,
+			conditions.ConditionTypePackExecutionPending,
+			metav1.ConditionTrue,
+			conditions.ReasonGatesClearing,
+			"Waiting for WrapperRunnerRBAC gate (gate 5).",
+			pe.Generation,
+		)
+		logger.Info("PackExecution gate 5 (WrapperRunnerRBAC) not cleared — requeueing",
+			"name", pe.Name, "reason", rbacSARDenyReason)
+		return ctrl.Result{RequeueAfter: gateRequeueInterval}, nil
+	}
+	conditions.SetCondition(
+		&pe.Status.Conditions,
+		conditions.ConditionTypeWrapperRunnerRBACNotReady,
+		metav1.ConditionFalse,
+		conditions.ReasonWrapperRunnerRBACNotReady,
+		"wrapper-runner has required RBAC permissions.",
+		pe.Generation,
+	)
+
 	// All gates cleared.
 	conditions.SetCondition(
 		&pe.Status.Conditions,
@@ -386,6 +436,25 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			return ctrl.Result{}, fmt.Errorf("failed to get Job %s: %w", jobName, err)
 		}
 	} else {
+		// Verify the Job belongs to this PackExecution (owner UID match).
+		// A stale Job with the same name from a previous PackExecution that has since
+		// been deleted may persist until GC catches up. Delete it and requeue so a
+		// fresh Job is submitted for the current PackExecution.
+		ownedByThis := false
+		for _, ref := range existingJob.GetOwnerReferences() {
+			if ref.UID == pe.UID {
+				ownedByThis = true
+				break
+			}
+		}
+		if !ownedByThis {
+			logger.Info("found stale Job from previous PackExecution — deleting and requeueing",
+				"name", pe.Name, "jobName", jobName)
+			if deleteErr := r.Client.Delete(ctx, existingJob); deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
+				return ctrl.Result{}, fmt.Errorf("delete stale Job %s: %w", jobName, deleteErr)
+			}
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		}
 		jobExists = true
 	}
 
@@ -517,8 +586,8 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 					Name:      piName,
 					Namespace: piNamespace,
 					Labels: map[string]string{
-						"infra.ontai.dev/pack":        pe.Spec.ClusterPackRef.Name,
-						"platform.ontai.dev/cluster":  pe.Spec.TargetClusterRef,
+						"infrastructure.ontai.dev/pack":    pe.Spec.ClusterPackRef.Name,
+						"infrastructure.ontai.dev/cluster": pe.Spec.TargetClusterRef,
 					},
 					OwnerReferences: []metav1.OwnerReference{{
 						APIVersion:         seamv1alpha1.GroupVersion.String(),
@@ -713,11 +782,10 @@ func (r *PackExecutionReconciler) isRBACProfileProvisioned(ctx context.Context, 
 // isConductorReadyForCluster determines whether the Conductor agent for the
 // target cluster is live and ready to accept Jobs. It performs two lookups:
 //
-//  1. TalosCluster namespace (Fix 1): tries seam-tenant-{clusterRef} first; if
-//     not found, falls back to seam-system. The management cluster TalosCluster
-//     lives in seam-system, tenant cluster TalosCluster in seam-tenant-{name}.
-//     If the TalosCluster is absent in both namespaces, the cluster is not yet
-//     registered — return false.
+//  1. InfrastructureTalosCluster namespace (Fix 1): tries seam-tenant-{clusterRef}
+//     first; if not found, falls back to seam-system. The management cluster
+//     InfrastructureTalosCluster lives in seam-system, tenant cluster in
+//     seam-tenant-{name}. If absent in both namespaces, cluster not yet registered.
 //
 //  2. RunnerConfig readiness (Fix 2): looks up the RunnerConfig named
 //     {targetClusterRef} in ont-system and checks status.capabilities. A
@@ -733,9 +801,9 @@ func (r *PackExecutionReconciler) isRBACProfileProvisioned(ctx context.Context, 
 func (r *PackExecutionReconciler) isConductorReadyForCluster(ctx context.Context, pe *seamv1alpha1.InfrastructurePackExecution) (bool, error) {
 	clusterRef := pe.Spec.TargetClusterRef
 	tcGVK := schema.GroupVersionKind{
-		Group:   "platform.ontai.dev",
+		Group:   "infrastructure.ontai.dev",
 		Version: "v1alpha1",
-		Kind:    "TalosCluster",
+		Kind:    "InfrastructureTalosCluster",
 	}
 
 	// Fix 1: try seam-tenant-{clusterRef} then fall back to seam-system.
@@ -762,9 +830,9 @@ func (r *PackExecutionReconciler) isConductorReadyForCluster(ctx context.Context
 	// correct signal that Conductor is live. conductor-schema.md §5, §10 step 3.
 	rc := &unstructured.Unstructured{}
 	rc.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "runner.ontai.dev",
+		Group:   "infrastructure.ontai.dev",
 		Version: "v1alpha1",
-		Kind:    "RunnerConfig",
+		Kind:    "InfrastructureRunnerConfig",
 	})
 	if err := r.Client.Get(ctx, types.NamespacedName{Name: clusterRef, Namespace: "ont-system"}, rc); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -778,6 +846,56 @@ func (r *PackExecutionReconciler) isConductorReadyForCluster(ctx context.Context
 		return false, nil
 	}
 	return true, nil
+}
+
+// isWrapperRunnerRBACReady performs SubjectAccessReview checks to verify that
+// the wrapper-runner ServiceAccount in pe.Namespace has the required RBAC
+// permissions before a Kueue Job is submitted. Returns (true, "", nil) when
+// all permissions are granted. Returns (false, denyReason, nil) when any
+// permission is denied. Returns (false, "", err) on SAR API failure.
+//
+// This is gate 5 of the PackExecution gate check. It catches stale or missing
+// RBAC before the Job pod runs and fails with a Forbidden error. The three
+// checks mirror the permissions declared in the compiler-generated
+// wrapper-runner Role (05-post-bootstrap/wrapper-runner.yaml).
+func (r *PackExecutionReconciler) isWrapperRunnerRBACReady(ctx context.Context, pe *seamv1alpha1.InfrastructurePackExecution) (bool, string, error) {
+	saUser := "system:serviceaccount:" + pe.Namespace + ":wrapper-runner"
+
+	checks := []struct {
+		verb     string
+		group    string
+		resource string
+	}{
+		{"list", "infrastructure.ontai.dev", "infrastructurepackexecutions"},
+		{"get", "infrastructure.ontai.dev", "infrastructurerunnerconfigs"},
+		{"create", "infrastructure.ontai.dev", "packoperationresults"},
+		{"delete", "infrastructure.ontai.dev", "packoperationresults"},
+	}
+
+	for _, chk := range checks {
+		sar := &authorizationv1.SubjectAccessReview{
+			Spec: authorizationv1.SubjectAccessReviewSpec{
+				User: saUser,
+				ResourceAttributes: &authorizationv1.ResourceAttributes{
+					Namespace: pe.Namespace,
+					Verb:      chk.verb,
+					Group:     chk.group,
+					Resource:  chk.resource,
+				},
+			},
+		}
+		if err := r.Client.Create(ctx, sar); err != nil {
+			return false, "", fmt.Errorf("SubjectAccessReview %s %s.%s: %w", chk.verb, chk.resource, chk.group, err)
+		}
+		if !sar.Status.Allowed {
+			reason := sar.Status.Reason
+			if reason == "" {
+				reason = fmt.Sprintf("wrapper-runner cannot %s %s in %s: permission denied", chk.verb, chk.resource, chk.group)
+			}
+			return false, reason, nil
+		}
+	}
+	return true, "", nil
 }
 
 // buildPackDeployJob constructs the pack-deploy Job spec for Kueue admission.
@@ -804,7 +922,7 @@ func (r *PackExecutionReconciler) buildPackDeployJob(
 			Labels: map[string]string{
 				kueueQueueLabel:              packDeployQueue,
 				"app.kubernetes.io/part-of": "wrapper",
-				"infra.ontai.dev/pe-name":   pe.Name,
+				"infrastructure.ontai.dev/pe-name":   pe.Name,
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{

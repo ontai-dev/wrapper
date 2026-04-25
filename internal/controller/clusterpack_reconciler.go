@@ -58,11 +58,11 @@ type ClusterPackReconciler struct {
 
 // Reconcile is the main reconciliation loop for ClusterPack.
 //
-// +kubebuilder:rbac:groups=infra.ontai.dev,resources=clusterpacks,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=infra.ontai.dev,resources=clusterpacks/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=infra.ontai.dev,resources=clusterpacks/finalizers,verbs=update
-// +kubebuilder:rbac:groups=infra.ontai.dev,resources=packinstances,verbs=get;list;delete
-// +kubebuilder:rbac:groups=infra.ontai.dev,resources=packexecutions,verbs=get;list;create;delete
+// +kubebuilder:rbac:groups=infrastructure.ontai.dev,resources=infrastructureclusterpacks,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=infrastructure.ontai.dev,resources=infrastructureclusterpacks/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=infrastructure.ontai.dev,resources=infrastructureclusterpacks/finalizers,verbs=update
+// +kubebuilder:rbac:groups=infrastructure.ontai.dev,resources=infrastructurepackinstances,verbs=get;list;delete
+// +kubebuilder:rbac:groups=infrastructure.ontai.dev,resources=infrastructurepackexecutions,verbs=get;list;create;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -100,7 +100,7 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// r.Client.Patch() after the status patch setup would overwrite the in-memory
 	// object with the stored state, losing any status mutations made before the call.
 	// CI-INV-002: ClusterPack spec is immutable after creation.
-	const specSnapshotAnnotation = "infra.ontai.dev/spec-checksum-snapshot"
+	const specSnapshotAnnotation = "infrastructure.ontai.dev/spec-checksum-snapshot"
 	currentChecksum := cp.Spec.Checksum + "|" + cp.Spec.RegistryRef.URL + "|" + cp.Spec.RegistryRef.Digest + "|" + cp.Spec.Version
 	if _, ok := cp.Annotations[specSnapshotAnnotation]; !ok {
 		metaPatch := client.MergeFrom(cp.DeepCopy())
@@ -261,9 +261,9 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				Name:      peName,
 				Namespace: tenantNS,
 				Labels: map[string]string{
-					"infra.ontai.dev/pack":         cp.Name,
-					"infra.ontai.dev/pack-version":  cp.Spec.Version,
-					"platform.ontai.dev/cluster":    clusterName,
+					"infrastructure.ontai.dev/pack":         cp.Name,
+					"infrastructure.ontai.dev/pack-version": cp.Spec.Version,
+					"infrastructure.ontai.dev/cluster":      clusterName,
 				},
 			},
 			Spec: seamcorev1alpha1.InfrastructurePackExecutionSpec{
@@ -272,7 +272,7 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 					Version: cp.Spec.Version,
 				},
 				TargetClusterRef:    clusterName,
-				AdmissionProfileRef: "rbac-wrapper",
+				AdmissionProfileRef: cp.Name,
 			},
 		}
 		if err := r.Client.Create(ctx, newPE); err != nil && !apierrors.IsAlreadyExists(err) {
