@@ -486,7 +486,7 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				porPatch := client.MergeFrom(resultPOR.DeepCopy())
 				resultPOR.OwnerReferences = append(resultPOR.OwnerReferences, metav1.OwnerReference{
 					APIVersion:         seamv1alpha1.GroupVersion.String(),
-					Kind:               "PackExecution",
+					Kind:               "InfrastructurePackExecution",
 					Name:               pe.Name,
 					UID:                pe.UID,
 					Controller:         boolPtr(false),
@@ -591,7 +591,7 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 					},
 					OwnerReferences: []metav1.OwnerReference{{
 						APIVersion:         seamv1alpha1.GroupVersion.String(),
-						Kind:               "PackExecution",
+						Kind:               "InfrastructurePackExecution",
 						Name:               pe.Name,
 						UID:                pe.UID,
 						Controller:         boolPtr(true),
@@ -753,7 +753,9 @@ func (r *PackExecutionReconciler) isPermissionSnapshotCurrent(ctx context.Contex
 
 // isRBACProfileProvisioned reads the RBACProfile referenced by the PackExecution
 // via unstructured to avoid importing guardian types. Returns true if the profile
-// has provisioned=true in its status. Pack RBACProfiles live in seam-tenant-{targetCluster}.
+// does not yet exist (Job will create it via rbac-intake) or has provisioned=true.
+// Returns false only when the profile EXISTS but provisioned=false, blocking the Job
+// until guardian reconciles it. Pack RBACProfiles live in seam-tenant-{targetCluster}.
 // guardian-schema.md §RBACProfile.
 func (r *PackExecutionReconciler) isRBACProfileProvisioned(ctx context.Context, pe *seamv1alpha1.InfrastructurePackExecution) (bool, error) {
 	rp := &unstructured.Unstructured{}
@@ -768,7 +770,8 @@ func (r *PackExecutionReconciler) isRBACProfileProvisioned(ctx context.Context, 
 	}
 	if err := r.Client.Get(ctx, rpKey, rp); err != nil {
 		if apierrors.IsNotFound(err) {
-			return false, nil
+			// Profile absent: Conductor Job creates it via rbac-intake. Allow Job to start.
+			return true, nil
 		}
 		return false, err
 	}
@@ -927,7 +930,7 @@ func (r *PackExecutionReconciler) buildPackDeployJob(
 			OwnerReferences: []metav1.OwnerReference{
 				{
 					APIVersion:         seamv1alpha1.GroupVersion.String(),
-					Kind:               "PackExecution",
+					Kind:               "InfrastructurePackExecution",
 					Name:               pe.Name,
 					UID:                pe.UID,
 					Controller:         boolPtr(true),

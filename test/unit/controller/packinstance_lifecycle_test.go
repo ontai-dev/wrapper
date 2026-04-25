@@ -163,8 +163,8 @@ func TestOwnershipChain_TalosClusterExists(t *testing.T) {
 		t.Fatalf("PackInstance must have exactly 1 ownerReference, got %d", len(pi.OwnerReferences))
 	}
 	piOwner := pi.OwnerReferences[0]
-	if piOwner.Kind != "PackExecution" || piOwner.Name != peName {
-		t.Errorf("PackInstance ownerRef Kind=%q Name=%q, want Kind=PackExecution Name=%s",
+	if piOwner.Kind != "InfrastructurePackExecution" || piOwner.Name != peName {
+		t.Errorf("PackInstance ownerRef Kind=%q Name=%q, want Kind=InfrastructurePackExecution Name=%s",
 			piOwner.Kind, piOwner.Name, peName)
 	}
 	if piOwner.UID != pe.UID {

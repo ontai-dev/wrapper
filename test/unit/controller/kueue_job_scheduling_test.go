@@ -394,8 +394,8 @@ func TestJobSucceeded_PackExecutionSucceeded(t *testing.T) {
 	if pi.Spec.TargetClusterRef != clusterRef {
 		t.Errorf("PackInstance.Spec.TargetClusterRef=%q, want %q", pi.Spec.TargetClusterRef, clusterRef)
 	}
-	if len(pi.OwnerReferences) != 1 || pi.OwnerReferences[0].Kind != "PackExecution" {
-		t.Errorf("PackInstance ownerRef not pointing to PackExecution: %+v", pi.OwnerReferences)
+	if len(pi.OwnerReferences) != 1 || pi.OwnerReferences[0].Kind != "InfrastructurePackExecution" {
+		t.Errorf("PackInstance ownerRef not pointing to InfrastructurePackExecution: %+v", pi.OwnerReferences)
 	}
 }
 

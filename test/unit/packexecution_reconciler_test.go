@@ -377,6 +377,53 @@ func TestPackExecutionReconciler_Gate4_RBACProfileNotProvisioned(t *testing.T) {
 	}
 }
 
+// TestPackExecutionReconciler_Gate4_AbsentProfileAllowsJobSubmission verifies that
+// when the RBACProfile does not yet exist (Conductor Job will create it via rbac-intake),
+// gate 4 clears and the Job is submitted. This prevents a deadlock where gate 4 would
+// permanently block first-deploy because the profile only exists after the Job runs.
+func TestPackExecutionReconciler_Gate4_AbsentProfileAllowsJobSubmission(t *testing.T) {
+	s := newPackExecutionScheme(t)
+	cp := newSignedClusterPack("my-pack", "infra-system", "v1.0.0")
+	pe := newPackExecution("exec-absent-profile", "infra-system", "my-pack", "v1.0.0", "cluster-a", "profile-absent")
+	ps := newPermissionSnapshot("snapshot-cluster-a", "seam-system", true)
+	tc := newTalosClusterWithConductorReady("cluster-a", true)
+	rc := newRunnerConfig("cluster-a", 1)
+	// No RBACProfile created — profile absent.
+
+	fakeClient := fake.NewClientBuilder().WithScheme(s).
+		WithObjects(cp, pe).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}, &seamcorev1alpha1.InfrastructureClusterPack{}).
+		Build()
+	if err := fakeClient.Create(context.Background(), ps); err != nil {
+		t.Fatalf("create PermissionSnapshot: %v", err)
+	}
+	if err := fakeClient.Create(context.Background(), tc); err != nil {
+		t.Fatalf("create TalosCluster: %v", err)
+	}
+	if err := fakeClient.Create(context.Background(), rc); err != nil {
+		t.Fatalf("create RunnerConfig: %v", err)
+	}
+
+	r := &controller.PackExecutionReconciler{
+		Client:      fakeClient,
+		Scheme:      s,
+		Recorder:    clientevents.NewFakeRecorder(10),
+		RBACChecker: rbacAllowedStub,
+	}
+
+	reconcilePE(t, r, pe)
+
+	// A Job must have been submitted — gate 4 did not block on absent profile.
+	jobList := &unstructured.UnstructuredList{}
+	jobList.SetGroupVersionKind(schema.GroupVersionKind{Group: "batch", Version: "v1", Kind: "JobList"})
+	if err := fakeClient.List(context.Background(), jobList, client.InNamespace("infra-system")); err != nil {
+		t.Fatalf("list Jobs: %v", err)
+	}
+	if len(jobList.Items) == 0 {
+		t.Error("expected a pack-deploy Job to be submitted when RBACProfile is absent; got none")
+	}
+}
+
 // TestPackExecutionReconciler_AllGatesClear_JobSubmitted verifies that when all
 // five gates pass (gate 0: ConductorReady + gates 1-4), a pack-deploy Job is
 // submitted with the Kueue queue label. Gap 27.
