@@ -388,19 +388,19 @@ func (r *ClusterPackReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		))).
 		Owns(&batchv1.Job{}).
 		Watches(&seamcorev1alpha1.InfrastructurePackInstance{},
-			handler.EnqueueRequestsFromMapFunc(r.mapPackInstanceToClusterPack),
+			handler.EnqueueRequestsFromMapFunc(r.MapPackInstanceToClusterPack),
 			builder.WithPredicates(packInstanceDeletePredicate),
 		).
 		Complete(r)
 }
 
-// mapPackInstanceToClusterPack maps a PackInstance delete event to the ClusterPack it
+// MapPackInstanceToClusterPack maps a PackInstance delete event to the ClusterPack it
 // references. Before returning the reconcile request, deletes the corresponding
 // PackExecution so the ClusterPackReconciler creates a fresh one for redelivery
-// (WS2). The deletion is best-effort — failure is non-fatal; the reconciler handles
+// (WS2). The deletion is best-effort -- failure is non-fatal; the reconciler handles
 // the case where the PackExecution still exists (it skips creation until the stale
 // object is gone or the version matches).
-func (r *ClusterPackReconciler) mapPackInstanceToClusterPack(
+func (r *ClusterPackReconciler) MapPackInstanceToClusterPack(
 	ctx context.Context,
 	obj client.Object,
 ) []reconcile.Request {
