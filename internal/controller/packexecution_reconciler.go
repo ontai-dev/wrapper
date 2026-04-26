@@ -639,12 +639,7 @@ func (r *PackExecutionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				// the new one so the deletion handler cleans up the correct resources.
 				newRefs := make([]seamv1alpha1.InfrastructureDeployedResourceRef, 0, len(porDeployedResources))
 				for _, dr := range porDeployedResources {
-					newRefs = append(newRefs, seamv1alpha1.InfrastructureDeployedResourceRef{
-						APIVersion: dr.APIVersion,
-						Kind:       dr.Kind,
-						Namespace:  dr.Namespace,
-						Name:       dr.Name,
-					})
+					newRefs = append(newRefs, seamv1alpha1.InfrastructureDeployedResourceRef(dr))
 				}
 				piStatus.Status.DeployedResources = newRefs
 				piStatus.Status.UpgradeDirection = string(upgradeDir)

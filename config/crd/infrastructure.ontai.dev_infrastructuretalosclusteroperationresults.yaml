@@ -1,0 +1,189 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.1
+  name: infrastructuretalosclusteroperationresults.infrastructure.ontai.dev
+spec:
+  group: infrastructure.ontai.dev
+  names:
+    kind: InfrastructureTalosClusterOperationResult
+    listKind: InfrastructureTalosClusterOperationResultList
+    plural: infrastructuretalosclusteroperationresults
+    shortNames:
+    - tcor
+    singular: infrastructuretalosclusteroperationresult
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.clusterRef
+      name: Cluster
+      type: string
+    - jsonPath: .spec.talosVersion
+      name: TalosVersion
+      type: string
+    - jsonPath: .spec.revision
+      name: Revision
+      type: integer
+    - jsonPath: .spec.operations
+      name: Ops
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          InfrastructureTalosClusterOperationResult accumulates the day-2 operation history
+          for one cluster. One CR per cluster, created when the platform operator provisions
+          the cluster tenant namespace. Operations are appended by the Conductor execute-mode
+          Job. On talosVersion upgrade, the current revision is archived to the GraphQuery DB
+          and a new revision epoch begins.
+
+          Named by the cluster name. Lives in seam-tenant-{clusterRef}.
+          conductor-schema.md §8, seam-core-schema.md §TCOR.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              InfrastructureTalosClusterOperationResultSpec is the accumulated day-2 operation
+              history for one cluster, scoped to the current talosVersion revision.
+
+              One CR per cluster. Created by the platform operator when the cluster tenant
+              namespace is provisioned. Named by the cluster name. Lives in seam-tenant-{clusterRef}.
+
+              When the cluster talosVersion is upgraded, the current revision is archived to
+              the GraphQuery DB and a new revision begins: Revision increments, TalosVersion
+              is updated, and Operations is cleared.
+
+              conductor-schema.md §8, seam-core-schema.md §TCOR.
+            properties:
+              clusterRef:
+                description: ClusterRef is the name of the InfrastructureTalosCluster
+                  this result accumulates.
+                type: string
+              operations:
+                additionalProperties:
+                  description: |-
+                    TalosClusterOperationRecord is a single day-2 operation record within one
+                    talosVersion revision. Multiple records accumulate in the parent TCOR as
+                    operations are performed against the cluster.
+                  properties:
+                    capability:
+                      description: Capability is the conductor capability that produced
+                        this record.
+                      type: string
+                    completedAt:
+                      description: CompletedAt is the time the capability execution
+                        finished.
+                      format: date-time
+                      type: string
+                    failureReason:
+                      description: FailureReason is populated when Status is Failed.
+                        Nil on success.
+                      properties:
+                        category:
+                          description: Category classifies the failure domain.
+                          enum:
+                          - ValidationFailure
+                          - CapabilityUnavailable
+                          - ExecutionFailure
+                          - ExternalDependencyFailure
+                          - InvariantViolation
+                          type: string
+                        reason:
+                          description: Reason is a human-readable description of the
+                            failure.
+                          type: string
+                      required:
+                      - category
+                      - reason
+                      type: object
+                    jobRef:
+                      description: |-
+                        JobRef is the Kubernetes Job name that produced this record.
+                        The platform reconciler uses this to correlate the record with the Job it submitted.
+                      type: string
+                    message:
+                      description: Message provides a human-readable summary of the
+                        outcome.
+                      type: string
+                    startedAt:
+                      description: StartedAt is the time the capability execution
+                        began.
+                      format: date-time
+                      type: string
+                    status:
+                      allOf:
+                      - enum:
+                        - Succeeded
+                        - Failed
+                      - enum:
+                        - Succeeded
+                        - Failed
+                      description: Status is the terminal status of the capability
+                        execution.
+                      type: string
+                  required:
+                  - capability
+                  - jobRef
+                  - status
+                  type: object
+                description: |-
+                  Operations is the map of day-2 operation records for the current revision,
+                  keyed by Kubernetes Job name (OPERATION_RESULT_CR). Map keying enables
+                  O(1) lookup by the platform reconciler and clean serialization when
+                  archiving the revision to the GraphQuery DB.
+                type: object
+              revision:
+                default: 1
+                description: |-
+                  Revision is the monotonic revision counter. Starts at 1. Increments on each
+                  talosVersion upgrade. Each revision holds the operations performed during that
+                  version epoch. Archived revisions are stored in the GraphQuery DB.
+                format: int64
+                type: integer
+              talosVersion:
+                description: |-
+                  TalosVersion is the cluster talosVersion for the current active revision.
+                  Matches InfrastructureTalosCluster.spec.talosVersion at the time this revision began.
+                type: string
+            required:
+            - clusterRef
+            - revision
+            - talosVersion
+            type: object
+          status:
+            description: |-
+              InfrastructureTalosClusterOperationResultStatus is the observed state.
+              Currently empty; reserved for future conditions.
+            properties:
+              observedGeneration:
+                description: ObservedGeneration is the last generation observed by
+                  any consumer.
+                format: int64
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
