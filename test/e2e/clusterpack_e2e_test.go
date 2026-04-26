@@ -32,24 +32,24 @@ import (
 
 var (
 	clusterPackGVR = schema.GroupVersionResource{
-		Group:    "infra.ontai.dev",
+		Group:    "infrastructure.ontai.dev",
 		Version:  "v1alpha1",
-		Resource: "clusterpacks",
+		Resource: "infrastructureclusterpacks",
 	}
 	packExecutionGVR = schema.GroupVersionResource{
-		Group:    "infra.ontai.dev",
+		Group:    "infrastructure.ontai.dev",
 		Version:  "v1alpha1",
-		Resource: "packexecutions",
+		Resource: "infrastructurepackexecutions",
 	}
 	packReceiptGVR = schema.GroupVersionResource{
 		Group:    "infrastructure.ontai.dev",
 		Version:  "v1alpha1",
-		Resource: "packreceipts",
+		Resource: "infrastructurepackreceipts",
 	}
 	packInstanceGVR = schema.GroupVersionResource{
-		Group:    "infra.ontai.dev",
+		Group:    "infrastructure.ontai.dev",
 		Version:  "v1alpha1",
-		Resource: "packinstances",
+		Resource: "infrastructurepackinstances",
 	}
 	packOperationResultGVR = schema.GroupVersionResource{
 		Group:    "infrastructure.ontai.dev",
@@ -142,7 +142,7 @@ func validatePackExecutionCreated(
 	Eventually(func() bool {
 		list, err := cl.Dynamic.Resource(packExecutionGVR).Namespace(tenantNS).
 			List(ctx, metav1.ListOptions{
-				LabelSelector: "infra.ontai.dev/pack=" + packName,
+				LabelSelector: "infrastructure.ontai.dev/pack=" + packName,
 			})
 		return err == nil && len(list.Items) > 0
 	}, timeout, interval).Should(BeTrue(),
@@ -161,7 +161,7 @@ func validateKueueJobSubmitted(
 	Eventually(func() bool {
 		list, err := cl.Typed.BatchV1().Jobs("infra-system").
 			List(ctx, metav1.ListOptions{
-				LabelSelector: "infra.ontai.dev/target-cluster=" + clusterName,
+				LabelSelector: "infrastructure.ontai.dev/target-cluster=" + clusterName,
 			})
 		return err == nil && len(list.Items) > 0
 	}, timeout, interval).Should(BeTrue(),
@@ -183,7 +183,7 @@ func validatePackReceipt(
 	Eventually(func() bool {
 		list, err := cl.Dynamic.Resource(packReceiptGVR).Namespace(tenantNS).
 			List(ctx, metav1.ListOptions{
-				LabelSelector: "infra.ontai.dev/pack=" + packName,
+				LabelSelector: "infrastructure.ontai.dev/pack=" + packName,
 			})
 		if err != nil || len(list.Items) == 0 {
 			return false
@@ -216,7 +216,7 @@ func validatePackInstance(
 	Eventually(func() bool {
 		list, err := cl.Dynamic.Resource(packInstanceGVR).Namespace(tenantNS).
 			List(ctx, metav1.ListOptions{
-				LabelSelector: "infra.ontai.dev/pack=" + packName,
+				LabelSelector: "infrastructure.ontai.dev/pack=" + packName,
 			})
 		if err != nil || len(list.Items) == 0 {
 			return false

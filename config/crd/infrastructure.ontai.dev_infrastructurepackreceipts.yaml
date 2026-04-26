@@ -1,0 +1,173 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.1
+  name: infrastructurepackreceipts.infrastructure.ontai.dev
+spec:
+  group: infrastructure.ontai.dev
+  names:
+    kind: InfrastructurePackReceipt
+    listKind: InfrastructurePackReceiptList
+    plural: infrastructurepackreceipts
+    shortNames:
+    - ipr
+    singular: infrastructurepackreceipt
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.clusterPackRef
+      name: Pack
+      type: string
+    - jsonPath: .spec.signatureVerified
+      name: Verified
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          InfrastructurePackReceipt is the seam-core CRD for pack delivery acknowledgement on a tenant cluster.
+          Written by conductor agent after signature verification. INV-026.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              InfrastructurePackReceiptSpec defines the desired state of an InfrastructurePackReceipt.
+              Written by conductor agent on the tenant cluster after verifying the signed PackInstance.
+              INV-026. conductor-schema.md.
+            properties:
+              chartName:
+                description: ChartName is the Helm chart name. Carried from ClusterPack.
+                type: string
+              chartURL:
+                description: ChartURL is the Helm chart repository URL. Carried from
+                  ClusterPack.
+                type: string
+              chartVersion:
+                description: ChartVersion is the Helm chart version. Carried from
+                  ClusterPack.
+                type: string
+              clusterPackRef:
+                description: ClusterPackRef is the name of the ClusterPack CR this
+                  receipt acknowledges.
+                type: string
+              helmVersion:
+                description: HelmVersion is the Helm SDK version. Carried from ClusterPack.
+                type: string
+              packSignature:
+                description: |-
+                  PackSignature is the base64-encoded Ed25519 signature from the management cluster conductor.
+                  INV-026.
+                type: string
+              rbacDigest:
+                description: RBACDigest is the OCI digest of the RBAC layer. Carried
+                  from ClusterPack for audit.
+                type: string
+              signatureVerified:
+                description: SignatureVerified indicates whether the conductor agent
+                  verified the pack signature.
+                type: boolean
+              targetClusterRef:
+                description: TargetClusterRef is the name of the cluster this receipt
+                  was generated on.
+                type: string
+              workloadDigest:
+                description: WorkloadDigest is the OCI digest of the workload layer.
+                  Carried from ClusterPack.
+                type: string
+            required:
+            - clusterPackRef
+            - targetClusterRef
+            type: object
+          status:
+            description: InfrastructurePackReceiptStatus is the observed state of
+              an InfrastructurePackReceipt.
+            properties:
+              conditions:
+                description: Conditions is the list of status conditions for this
+                  PackReceipt.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              observedGeneration:
+                description: ObservedGeneration is the generation most recently reconciled.
+                format: int64
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

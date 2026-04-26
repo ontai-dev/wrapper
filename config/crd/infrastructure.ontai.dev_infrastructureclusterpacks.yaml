@@ -4,31 +4,25 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.16.1
-  name: packinstances.infra.ontai.dev
+  name: infrastructureclusterpacks.infrastructure.ontai.dev
 spec:
-  group: infra.ontai.dev
+  group: infrastructure.ontai.dev
   names:
-    kind: PackInstance
-    listKind: PackInstanceList
-    plural: packinstances
+    kind: InfrastructureClusterPack
+    listKind: InfrastructureClusterPackList
+    plural: infrastructureclusterpacks
     shortNames:
-    - pi
-    singular: packinstance
+    - icp
+    singular: infrastructureclusterpack
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.clusterPackRef
-      name: Pack
+    - jsonPath: .spec.version
+      name: Version
       type: string
-    - jsonPath: .spec.targetClusterRef
-      name: Cluster
-      type: string
-    - jsonPath: .status.conditions[?(@.type=="Ready")].status
-      name: Ready
-      type: string
-    - jsonPath: .status.conditions[?(@.type=="Drifted")].status
-      name: Drifted
-      type: string
+    - jsonPath: .status.signed
+      name: Signed
+      type: boolean
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -36,9 +30,9 @@ spec:
     schema:
       openAPIV3Schema:
         description: |-
-          PackInstance records the delivered pack state on a target cluster. It is created
-          by wrapper after a successful PackExecution and updated by the drift detection loop.
-          One PackInstance per pack per target cluster. wrapper-schema.md §3.
+          InfrastructureClusterPack is the seam-core CRD for pack registration.
+          Records an OCI artifact that has been compiled and is ready for runtime delivery.
+          Spec is immutable after creation. wrapper-schema.md §3.
         properties:
           apiVersion:
             description: |-
@@ -59,62 +53,74 @@ spec:
             type: object
           spec:
             description: |-
-              PackInstanceSpec defines the desired state of a PackInstance.
-              wrapper-schema.md §3.
+              InfrastructureClusterPackSpec defines the desired state of an InfrastructureClusterPack.
+              All fields are immutable after creation. wrapper-schema.md §3.
             properties:
+              basePackName:
+                description: BasePackName is the logical pack name shared across versions
+                  (e.g., "nginx-ingress").
+                type: string
               chartName:
-                description: |-
-                  ChartName is the name of the Helm chart delivered.
-                  Copied from ClusterPack.spec.chartName at creation time.
-                  Absent for kustomize and raw category packs. Decision B, T-04 schema.
+                description: ChartName is the name of the Helm chart used to compile
+                  this pack.
                 type: string
               chartURL:
-                description: |-
-                  ChartURL is the URL of the Helm chart repository.
-                  Copied from ClusterPack.spec.chartURL at creation time.
-                  Absent for kustomize and raw category packs. Decision B, T-04 schema.
+                description: ChartURL is the URL of the Helm chart repository used
+                  to compile this pack.
                 type: string
               chartVersion:
-                description: |-
-                  ChartVersion is the version of the Helm chart delivered for this PackInstance.
-                  Copied from ClusterPack.spec.chartVersion at creation time.
-                  Absent for kustomize and raw category packs. Decision B, T-04 schema.
+                description: ChartVersion is the version of the Helm chart used to
+                  compile this pack.
                 type: string
-              clusterPackRef:
-                description: |-
-                  ClusterPackRef identifies the ClusterPack that was delivered to produce
-                  this instance record.
-                minLength: 1
+              checksum:
+                description: Checksum is the content-addressed checksum of the full
+                  artifact manifest set.
                 type: string
-              dependencyPolicy:
-                description: DependencyPolicy defines behavior when a dependency reports
-                  drift.
-                properties:
-                  onDrift:
-                    default: Warn
-                    description: |-
-                      OnDrift controls how this PackInstance responds when a declared dependency
-                      PackInstance reports Drifted=True.
-                    enum:
-                    - Block
-                    - Warn
-                    - Ignore
-                    type: string
-                type: object
-              dependsOn:
+              clusterScopedDigest:
                 description: |-
-                  DependsOn is the list of PackInstance names that this instance depends on.
-                  The DependencyPolicy.OnDrift setting governs behavior when any listed
-                  dependency reports drift.
+                  ClusterScopedDigest is the OCI digest of the cluster-scoped non-RBAC layer.
+                  Applied after guardian RBAC intake and before workload manifests. wrapper-schema.md §4.
+                type: string
+              executionOrder:
+                description: ExecutionOrder defines the ordered stages in which pack
+                  manifests are applied.
                 items:
-                  type: string
+                  description: InfrastructurePackExecutionStage is a single stage
+                    in the pack execution order.
+                  properties:
+                    manifests:
+                      description: Manifests is the list of manifest names to apply
+                        in this stage.
+                      items:
+                        type: string
+                      type: array
+                    name:
+                      description: 'Name is the stage name. Must be one of: rbac,
+                        storage, stateful, stateless.'
+                      enum:
+                      - rbac
+                      - storage
+                      - stateful
+                      - stateless
+                      type: string
+                  required:
+                  - name
+                  type: object
                 type: array
               helmVersion:
-                description: |-
-                  HelmVersion is the version of the Helm SDK used to render the ClusterPack.
-                  Copied from ClusterPack.spec.helmVersion at creation time.
-                  Absent for kustomize and raw category packs. Decision B, T-04 schema.
+                description: HelmVersion is the version of the Helm SDK used to render
+                  this pack.
                 type: string
+              lifecyclePolicies:
+                description: LifecyclePolicies controls artifact retention behavior.
+                properties:
+                  retainOnDeletion:
+                    default: true
+                    description: |-
+                      RetainOnDeletion controls whether the OCI artifact is retained when the
+                      ClusterPack CR is deleted. Default: true (artifact retained).
+                    type: boolean
+                type: object
               lineage:
                 description: |-
                   Lineage is the sealed causal chain record for this root declaration.
@@ -188,28 +194,80 @@ spec:
                 - rootNamespace
                 - rootUID
                 type: object
-              targetClusterRef:
+              provenance:
+                description: Provenance records build-time metadata for audit and
+                  traceability.
+                properties:
+                  buildID:
+                    description: BuildID is the CI/CD build identifier that produced
+                      this pack.
+                    type: string
+                  buildTimestamp:
+                    description: BuildTimestamp is when the pack artifact was produced.
+                    format: date-time
+                    type: string
+                  sourceRef:
+                    description: SourceRef is the git reference (commit SHA or tag)
+                      from which the pack was built.
+                    type: string
+                type: object
+              rbacDigest:
                 description: |-
-                  TargetClusterRef is the name of the TalosCluster CR to which this pack
-                  has been delivered.
-                minLength: 1
+                  RBACDigest is the OCI digest of the RBAC layer of this ClusterPack artifact.
+                  Contains ServiceAccount, Role, ClusterRole, RoleBinding, ClusterRoleBinding manifests.
+                type: string
+              registryRef:
+                description: RegistryRef identifies the OCI artifact for this pack.
+                  Immutable after creation.
+                properties:
+                  digest:
+                    description: Digest is the OCI image digest (e.g., sha256:abc123...).
+                      Immutable after creation.
+                    type: string
+                  url:
+                    description: URL is the OCI registry URL including image name.
+                    type: string
+                required:
+                - digest
+                - url
+                type: object
+              sourceBuildRef:
+                description: SourceBuildRef is an opaque reference to the build that
+                  produced this pack. Informational.
+                type: string
+              targetClusters:
+                description: TargetClusters is the list of cluster names to which
+                  this ClusterPack should be delivered.
+                items:
+                  type: string
+                type: array
+              valuesFile:
+                description: |-
+                  ValuesFile is the path to the values file used during pack compilation.
+                  For Helm packs: the user-supplied values file merged with chart defaults at render time.
+                  For kustomize/raw packs: the overlay or patch file applied during the external build.
+                  Informational -- recorded so admins can trace which customization produced this artifact.
                 type: string
               version:
+                description: Version is the semantic version of this pack. Immutable
+                  after creation.
+                type: string
+              workloadDigest:
                 description: |-
-                  Version is the semantic version of the ClusterPack that was delivered.
-                  Set from ClusterPack.spec.version at PackInstance creation time.
-                  Used by DSNSReconciler to emit pack.{name}.{version}.wrapper.{cluster} DNS records.
+                  WorkloadDigest is the OCI digest of the workload layer of this ClusterPack artifact.
+                  Applied after guardian RBACProfile reaches provisioned=true. wrapper-schema.md §4.
                 type: string
             required:
-            - clusterPackRef
-            - targetClusterRef
+            - registryRef
+            - version
             type: object
           status:
-            description: PackInstanceStatus defines the observed state of a PackInstance.
+            description: InfrastructureClusterPackStatus is the observed state of
+              an InfrastructureClusterPack.
             properties:
               conditions:
                 description: Conditions is the list of status conditions for this
-                  PackInstance.
+                  ClusterPack.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -265,70 +323,18 @@ spec:
                   - type
                   type: object
                 type: array
-                x-kubernetes-list-map-keys:
-                - type
-                x-kubernetes-list-type: map
-              deliveredAt:
-                description: |-
-                  DeliveredAt records when the pack was most recently confirmed delivered
-                  (PackReceipt observed in a Ready state).
-                format: date-time
-                type: string
-              deployedResources:
-                description: |-
-                  DeployedResources is the list of Kubernetes resources applied by the
-                  pack-deploy job. Written by PackExecutionReconciler on successful deployment.
-                  Used by the PackInstance deletion handler to clean up workload resources
-                  when the ClusterPack is deleted. wrapper-schema.md §3, Decision 11.
-                items:
-                  description: |-
-                    DeployedResourceRef records a single Kubernetes resource applied by the pack-deploy
-                    job. Used by the PackInstance deletion handler to clean up deployed workload when
-                    the ClusterPack is deleted. wrapper-schema.md §3, Decision 11.
-                  properties:
-                    apiVersion:
-                      description: APIVersion is the Kubernetes apiVersion (e.g.,
-                        apps/v1, v1).
-                      type: string
-                    kind:
-                      description: Kind is the Kubernetes resource Kind (e.g., Deployment,
-                        Namespace).
-                      type: string
-                    name:
-                      description: Name is the resource name.
-                      type: string
-                    namespace:
-                      description: Namespace is the resource namespace. Empty for
-                        cluster-scoped resources.
-                      type: string
-                  required:
-                  - apiVersion
-                  - kind
-                  - name
-                  type: object
-                type: array
-              driftSummary:
-                description: |-
-                  DriftSummary is a human-readable one-line summary of the current drift
-                  state as reported by the conductor drift detection loop via PackReceipt.
-                type: string
               observedGeneration:
                 description: ObservedGeneration is the generation most recently reconciled.
                 format: int64
                 type: integer
-              upgradeDirection:
-                description: |-
-                  UpgradeDirection records the version transition direction for the last
-                  deployment of this PackInstance. Set by PackExecutionReconciler via semver
-                  comparison of the existing version against the new ClusterPack version.
-                  Initial: first deployment. Upgrade: newer version. Rollback: older version.
-                  Redeploy: same version reapplied. wrapper-schema.md §3, Decision 11.
-                enum:
-                - Initial
-                - Upgrade
-                - Rollback
-                - Redeploy
+              packSignature:
+                description: PackSignature is the base64-encoded Ed25519 signature
+                  produced by the management cluster conductor.
                 type: string
+              signed:
+                description: Signed indicates whether the conductor signing loop has
+                  signed this pack.
+                type: boolean
             type: object
         type: object
     served: true

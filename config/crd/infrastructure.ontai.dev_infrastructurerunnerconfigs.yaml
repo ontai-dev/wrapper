@@ -1,0 +1,323 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.1
+  name: infrastructurerunnerconfigs.infrastructure.ontai.dev
+spec:
+  group: infrastructure.ontai.dev
+  names:
+    kind: InfrastructureRunnerConfig
+    listKind: InfrastructureRunnerConfigList
+    plural: infrastructurerunnerconfigs
+    shortNames:
+    - irc
+    singular: infrastructurerunnerconfig
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.clusterRef
+      name: Cluster
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          InfrastructureRunnerConfig is the seam-core CRD for Conductor agent runtime configuration.
+          Owned by seam-core; authored exclusively by the platform operator. INV-009.
+          conductor-schema.md.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              InfrastructureRunnerConfigSpec is the operator-generated operational contract for a
+              specific cluster. Generated at runtime by platform using the runner shared library.
+              Never human-authored. INV-009, INV-010. conductor-schema.md.
+            properties:
+              clusterRef:
+                description: ClusterRef is the name of the TalosCluster this RunnerConfig
+                  is authoritative for.
+                type: string
+              maintenanceTargetNodes:
+                description: MaintenanceTargetNodes is the list of node names that
+                  are the subject of the operation.
+                items:
+                  type: string
+                type: array
+              operationalHistory:
+                description: OperationalHistory is an append-only record of completed
+                  RunnerConfig executions.
+                items:
+                  description: |-
+                    RunnerOperationalHistoryEntry is a single append-only audit record describing one
+                    configuration change applied to this RunnerConfig. Never truncated.
+                  properties:
+                    appliedAt:
+                      description: AppliedAt is the time this change was applied.
+                      format: date-time
+                      type: string
+                    appliedBy:
+                      description: AppliedBy identifies who applied the change.
+                      type: string
+                    concern:
+                      description: Concern identifies what aspect of configuration
+                        changed.
+                      type: string
+                    newValue:
+                      description: NewValue is the value after the change.
+                      type: string
+                    previousValue:
+                      description: PreviousValue is the value before the change. Empty
+                        for initial entries.
+                      type: string
+                  required:
+                  - appliedAt
+                  - appliedBy
+                  - concern
+                  - newValue
+                  type: object
+                type: array
+              operatorLeaderNode:
+                description: OperatorLeaderNode is the node hosting the leader pod
+                  of the initiating operator.
+                type: string
+              phases:
+                description: Phases is the ordered list of operational phases for
+                  this cluster's Conductor lifecycle.
+                items:
+                  description: RunnerPhaseConfig carries per-phase parameters for
+                    the runner's execution context.
+                  properties:
+                    name:
+                      description: Name identifies the phase.
+                      type: string
+                    parameters:
+                      additionalProperties:
+                        type: string
+                      description: Parameters holds phase-specific key-value configuration.
+                      type: object
+                  required:
+                  - name
+                  type: object
+                type: array
+              runnerImage:
+                description: |-
+                  RunnerImage is the fully qualified container image reference for the Conductor agent.
+                  Tag convention: v{talosVersion}-r{revision} stable, dev/dev-rc{N} development. INV-011.
+                type: string
+              selfOperation:
+                description: SelfOperation is true when the Job's execution cluster
+                  and the target cluster are the same.
+                type: boolean
+              steps:
+                description: Steps is the ordered list of execution steps across all
+                  phases.
+                items:
+                  description: RunnerConfigStep declares one step in a multi-step
+                    operation intent.
+                  properties:
+                    capability:
+                      description: Capability is the named Conductor capability to
+                        invoke for this step.
+                      type: string
+                    dependsOn:
+                      description: DependsOn is the name of a prior step that must
+                        complete before this step begins.
+                      type: string
+                    haltOnFailure:
+                      description: |-
+                        HaltOnFailure controls sequencer behaviour when this step fails.
+                        When true, failure terminates the RunnerConfig with no further steps executing.
+                      type: boolean
+                    name:
+                      description: Name is the unique identifier for this step within
+                        the RunnerConfig.
+                      type: string
+                    parameters:
+                      additionalProperties:
+                        type: string
+                      description: Parameters is the input parameter map passed to
+                        the capability at Job materialisation time.
+                      type: object
+                  required:
+                  - capability
+                  - name
+                  type: object
+                type: array
+            required:
+            - clusterRef
+            - runnerImage
+            type: object
+          status:
+            description: |-
+              InfrastructureRunnerConfigStatus is written exclusively by the Conductor agent leader.
+              CR-INV-006.
+            properties:
+              agentLeader:
+                description: AgentLeader is the pod name of the current Conductor
+                  agent leader.
+                type: string
+              agentVersion:
+                description: AgentVersion is the version string of the Conductor agent
+                  binary currently running.
+                type: string
+              capabilities:
+                description: |-
+                  Capabilities is the self-declared capability manifest emitted by the Conductor agent on startup.
+                  CR-INV-005.
+                items:
+                  description: RunnerCapabilityEntry is one capability declared by
+                    the Conductor agent on startup.
+                  properties:
+                    description:
+                      description: Description is a human-readable description of
+                        what this capability does.
+                      type: string
+                    name:
+                      description: Name is the capability name (e.g., pack-deploy,
+                        talos-upgrade).
+                      type: string
+                    version:
+                      description: Version is the capability version declared by the
+                        agent.
+                      type: string
+                  required:
+                  - name
+                  - version
+                  type: object
+                type: array
+              conditions:
+                description: Conditions is the standard Kubernetes condition list
+                  for this RunnerConfig.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              failedStep:
+                description: |-
+                  FailedStep is the name of the first step that reached the Failed phase.
+                  Present only when Phase="Failed". conductor-schema.md §17.
+                type: string
+              phase:
+                description: |-
+                  Phase is the terminal execution phase written by Conductor execute mode.
+                  "Completed" means all steps succeeded. "Failed" means at least one step failed.
+                  Empty means execution is in progress. Platform operators watch this field to
+                  detect terminal conditions without scanning StepResults. conductor-schema.md §17.
+                type: string
+              stepResults:
+                description: StepResults is the ordered list of step result records
+                  written by Conductor execute mode.
+                items:
+                  description: RunnerConfigStepResult is the status record for one
+                    step.
+                  properties:
+                    completedAt:
+                      description: CompletedAt is the time this step finished execution.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Message is additional context about the step outcome.
+                      type: string
+                    name:
+                      description: Name matches the Name field of the corresponding
+                        RunnerConfigStep in spec.
+                      type: string
+                    startedAt:
+                      description: StartedAt is the time this step began execution.
+                      format: date-time
+                      type: string
+                    status:
+                      allOf:
+                      - enum:
+                        - Succeeded
+                        - Failed
+                        - Skipped
+                      - enum:
+                        - Succeeded
+                        - Failed
+                        - Skipped
+                      description: Status is the terminal status of this step execution.
+                      type: string
+                  required:
+                  - name
+                  - status
+                  type: object
+                type: array
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

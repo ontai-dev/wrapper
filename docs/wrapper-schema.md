@@ -1,5 +1,6 @@
 # Wrapper-schema.md
-> API Group: infra.ontai.dev
+> CRD types: infrastructure.ontai.dev/v1alpha1 (InfrastructureClusterPack, InfrastructurePackExecution, InfrastructurePackInstance, InfrastructurePackBuild) -- schema owned by seam-core (Decision G). Supersedes infra.ontai.dev (Phase 2B, 2026-04-25).
+> Runtime behavior and reconciliation schema: this document
 > Operator: Wrapper
 > Absorb before any design or implementation work touching pack compile or delivery.
 > Amended: 2026-03-30 - compile mode is a workstation/CI operation, never a cluster Job.
@@ -108,7 +109,7 @@ the registry without a valid signature is rejected at the Job execution layer.
 
 ## 4. CRDs - Management Cluster
 
-### PackBuild (Local Spec and Provenance Record - Not a Cluster CRD)
+### InfrastructurePackBuild (Local Spec and Provenance Record - Not a Cluster CRD)
 
 PackBuild is not a Kubernetes CRD applied to the management cluster. It is the
 human's local specification file used as input to conductor compile mode. It may
@@ -137,8 +138,9 @@ outputDir: filesystem path where the runner writes the ClusterPack CR YAML outpu
 
 ---
 
-### ClusterPack
+### InfrastructureClusterPack
 
+Kind: InfrastructureClusterPack. API group: infrastructure.ontai.dev/v1alpha1. Schema owned by seam-core (Decision G).
 Scope: Namespaced - seam-tenant-{cluster-name}
 Short name: cp
 Lives in: OCI registry (artifact), git (CR YAML), management cluster (applied via GitOps).
@@ -204,8 +206,9 @@ version. The signing loop is the only process that can advance this state.
 
 ---
 
-### PackExecution
+### InfrastructurePackExecution
 
+Kind: InfrastructurePackExecution. API group: infrastructure.ontai.dev/v1alpha1. Schema owned by seam-core (Decision G).
 Scope: Namespaced - seam-tenant-{cluster-name}
 Short name: pe
 Named capability: pack-deploy
@@ -232,8 +235,9 @@ Status conditions: Pending, PackSignaturePending, Running, Succeeded, Failed.
 
 ---
 
-### PackInstance
+### InfrastructurePackInstance
 
+Kind: InfrastructurePackInstance. API group: infrastructure.ontai.dev/v1alpha1. Schema owned by seam-core (Decision G).
 Scope: Namespaced - seam-tenant-{cluster-name}
 Short name: pi
 
@@ -255,8 +259,9 @@ Status conditions: Ready, Progressing, Drifted, DependencyBlocked.
 
 ## 5. CRDs - Target Cluster (Agent-Managed)
 
-### PackReceipt
+### InfrastructurePackReceipt
 
+Kind: InfrastructurePackReceipt. API group: infrastructure.ontai.dev/v1alpha1. Schema owned by seam-core (Decision G).
 Scope: Namespaced - ont-system on target cluster.
 Short name: pr
 
@@ -343,25 +348,25 @@ via a new PackExecution - the agent never auto-remediates.
 Reads: security.ontai.dev/PermissionSnapshot delivery status before admitting
 PackExecution. Does not write to security.ontai.dev.
 ClusterAssignment is removed. Pack-to-cluster binding is declared directly in
-ClusterPack.spec.targetClusters. Wrapper does not read from platform.ontai.dev.
-Reads: runner.ontai.dev/RunnerConfig status (capability confirmation).
-Writes: runner.ontai.dev/RunnerConfig (generates from ClusterPack/PackExecution
+InfrastructureClusterPack.spec.targetClusters. Wrapper does not read from platform.ontai.dev.
+Reads: infrastructure.ontai.dev/InfrastructureRunnerConfig status (capability confirmation).
+Writes: infrastructure.ontai.dev/InfrastructureRunnerConfig (generates from ClusterPack/PackExecution
   context via shared runner library - no PackBuild controller).
-Writes: infra.ontai.dev resources on management cluster.
-Writes: PackReceipt on target clusters via conductor.
+Writes: infrastructure.ontai.dev resources on management cluster (InfrastructureClusterPack, InfrastructurePackExecution, InfrastructurePackInstance).
+Writes: InfrastructurePackReceipt on target clusters via conductor.
 
 Pack delivery ownership chain (locked):
-- ClusterPack: human/GitOps authored. Immutable after creation.
-- RunnerConfig: created by ClusterPackReconciler, one per targetClusters entry,
-  in seam-tenant-{clusterName}, with labels platform.ontai.dev/cluster and
-  infra.ontai.dev/pack.
-- PackExecution: created by management cluster Conductor agent from RunnerConfig
-  (not by Wrapper). Conductor watches RunnerConfigs labeled infra.ontai.dev/pack
+- InfrastructureClusterPack: human/GitOps authored. Immutable after creation.
+- InfrastructureRunnerConfig: created by ClusterPackReconciler, one per targetClusters entry,
+  in seam-tenant-{clusterName}, with labels infrastructure.ontai.dev/cluster and
+  infrastructure.ontai.dev/pack.
+- InfrastructurePackExecution: created by management cluster Conductor agent from RunnerConfig
+  (not by Wrapper). Conductor watches RunnerConfigs labeled infrastructure.ontai.dev/pack
   and creates one PackExecution per RunnerConfig that lacks one.
-- PackInstance: created by Wrapper PackExecutionReconciler after observing that
+- InfrastructurePackInstance: created by Wrapper PackExecutionReconciler after observing that
   the pack-deploy Job succeeded (OperationResult ConfigMap present and Succeeded).
-  Namespace: seam-tenant-{clusterRef}. Label: infra.ontai.dev/pack.
-- PackReceipt: created by Conductor agent on the target cluster after verifying
+  Namespace: seam-tenant-{clusterRef}. Label: infrastructure.ontai.dev/pack.
+- InfrastructurePackReceipt: created by Conductor agent on the target cluster after verifying
   the PackInstance signature and applying the manifests.
 
 Note: The signing loop is an conductor responsibility. The Wrapper controller
@@ -370,7 +375,8 @@ until signing is complete.
 
 ---
 
-*infra.ontai.dev schema - Wrapper*
+*Wrapper behavioral schema - Wrapper*
+*CRD type schema authority: seam-core (infrastructure.ontai.dev). Supersedes infra.ontai.dev. Decision G, Phase 2B 2026-04-25.*
 *Amendments:*
 *2026-03-30 - Compile mode is a workstation/CI operation, never a cluster Job.*
 *  PackBuild removed as a management cluster CRD. No PackBuild controller.*
@@ -390,4 +396,7 @@ until signing is complete.
 *  Pack-deploy calls guardian /rbac-intake for RBAC layer before applying workload layer.*
 *  Backward compatibility: rbacDigest absent means single-layer fallback.*
 *  wrapper-runner Role restricted to workload resource kinds only.*
-*  wrapper-runner ClusterRole removed. Guardian intake owns all RBAC writes.*
+*  wrapper-runner ClusterRole added for cluster-scoped bucket 2 resources (Phase 2B, 2026-04-25).*
+*2026-04-25 - Phase 2B: all CRD types migrated to seam-core infrastructure.ontai.dev.*
+*  infra.ontai.dev API group superseded. Kind names carry Infrastructure prefix.*
+*  All reconcilers, labels, annotations, and finalizers updated to infrastructure.ontai.dev.*

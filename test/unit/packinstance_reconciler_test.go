@@ -26,9 +26,20 @@ func newPackInstanceScheme(t *testing.T) *runtime.Scheme {
 	if err := clientgoscheme.AddToScheme(s); err != nil {
 		t.Fatalf("AddToScheme clientgo: %v", err)
 	}
-	if err := seamcorev1alpha1.AddToScheme(s); err != nil {
-		t.Fatalf("AddToScheme seamcorev1alpha1: %v", err)
-	}
+	// Register only the seam-core types that the PackInstanceReconciler uses as typed
+	// objects. InfrastructurePackReceipt is intentionally excluded: the reconciler
+	// accesses it only via unstructured (getPackReceipt). Registering it as a typed
+	// schema would cause the fake client to convert the unstructured receipt and strip
+	// dynamic status fields (signatureVerified, driftStatus) that conductor writes but
+	// are not yet declared in InfrastructurePackReceiptStatus.
+	s.AddKnownTypes(seamcorev1alpha1.GroupVersion,
+		&seamcorev1alpha1.InfrastructurePackInstance{},
+		&seamcorev1alpha1.InfrastructurePackInstanceList{},
+		&seamcorev1alpha1.InfrastructurePackExecution{},
+		&seamcorev1alpha1.InfrastructurePackExecutionList{},
+		&seamcorev1alpha1.InfrastructureClusterPack{},
+		&seamcorev1alpha1.InfrastructureClusterPackList{},
+	)
 	return s
 }
 
@@ -48,9 +59,9 @@ func newPackInstance(name, namespace, packRef, clusterRef string) *seamcorev1alp
 func newPackReceipt(name, namespace string, signatureVerified bool, driftStatus string) *unstructured.Unstructured {
 	r := &unstructured.Unstructured{}
 	r.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "runner.ontai.dev",
+		Group:   "infrastructure.ontai.dev",
 		Version: "v1alpha1",
-		Kind:    "PackReceipt",
+		Kind:    "InfrastructurePackReceipt",
 	})
 	r.SetName(name)
 	r.SetNamespace(namespace)

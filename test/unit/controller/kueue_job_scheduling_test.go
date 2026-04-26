@@ -51,6 +51,7 @@ func TestJobSubmission_KueueQueueLabel(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   buildTestScheme(t),
 		Recorder: clientevents.NewFakeRecorder(32),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	reconcilePackExecution(t, r, pe.Name, pe.Namespace)
@@ -77,8 +78,8 @@ func TestJobSubmission_KueueQueueLabel(t *testing.T) {
 	}
 
 	// PE name label — used for filtering.
-	if v := job.Labels["infra.ontai.dev/pe-name"]; v != pe.Name {
-		t.Errorf("infra.ontai.dev/pe-name=%q, want %q", v, pe.Name)
+	if v := job.Labels["infrastructure.ontai.dev/pe-name"]; v != pe.Name {
+		t.Errorf("infrastructure.ontai.dev/pe-name=%q, want %q", v, pe.Name)
 	}
 }
 
@@ -97,6 +98,7 @@ func TestJobSubmission_PackArtifactRefEnvVars(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   buildTestScheme(t),
 		Recorder: clientevents.NewFakeRecorder(32),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	reconcilePackExecution(t, r, pe.Name, pe.Namespace)
@@ -160,6 +162,7 @@ func TestJobSubmission_CredentialsVolumeMount(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   buildTestScheme(t),
 		Recorder: clientevents.NewFakeRecorder(32),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	reconcilePackExecution(t, r, pe.Name, pe.Namespace)
@@ -223,6 +226,7 @@ func TestJobSubmission_NoDAGFields(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   buildTestScheme(t),
 		Recorder: clientevents.NewFakeRecorder(32),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	reconcilePackExecution(t, r, pe.Name, pe.Namespace)
@@ -271,7 +275,7 @@ func TestJobFailed_PackExecutionFailed(t *testing.T) {
 	ctx := context.Background()
 
 	// Pre-create the Job in a Failed state (conductor executor failed).
-	failedJob := newJob(packDeployJobName(peName), "infra-system", 0, 1)
+	failedJob := newJob(packDeployJobName(peName), "infra-system", 0, 1, pe)
 	if err := fakeClient.Create(ctx, failedJob); err != nil {
 		t.Fatalf("create failed Job: %v", err)
 	}
@@ -280,6 +284,7 @@ func TestJobFailed_PackExecutionFailed(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   buildTestScheme(t),
 		Recorder: clientevents.NewFakeRecorder(32),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	result := reconcilePackExecution(t, r, peName, "infra-system")
@@ -337,7 +342,7 @@ func TestJobSucceeded_PackExecutionSucceeded(t *testing.T) {
 	ctx := context.Background()
 
 	// Pre-create succeeded Job and PackOperationResult CR.
-	succeededJob := newJob(packDeployJobName(peName), "infra-system", 1, 0)
+	succeededJob := newJob(packDeployJobName(peName), "infra-system", 1, 0, pe)
 	por := newOperationResultPOR(peName, "infra-system")
 	if err := fakeClient.Create(ctx, succeededJob); err != nil {
 		t.Fatalf("create succeeded Job: %v", err)
@@ -350,6 +355,7 @@ func TestJobSucceeded_PackExecutionSucceeded(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   buildTestScheme(t),
 		Recorder: clientevents.NewFakeRecorder(32),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	result := reconcilePackExecution(t, r, peName, "infra-system")
@@ -388,8 +394,8 @@ func TestJobSucceeded_PackExecutionSucceeded(t *testing.T) {
 	if pi.Spec.TargetClusterRef != clusterRef {
 		t.Errorf("PackInstance.Spec.TargetClusterRef=%q, want %q", pi.Spec.TargetClusterRef, clusterRef)
 	}
-	if len(pi.OwnerReferences) != 1 || pi.OwnerReferences[0].Kind != "PackExecution" {
-		t.Errorf("PackInstance ownerRef not pointing to PackExecution: %+v", pi.OwnerReferences)
+	if len(pi.OwnerReferences) != 1 || pi.OwnerReferences[0].Kind != "InfrastructurePackExecution" {
+		t.Errorf("PackInstance ownerRef not pointing to InfrastructurePackExecution: %+v", pi.OwnerReferences)
 	}
 }
 
@@ -409,7 +415,7 @@ func TestIdempotency_RunningJob_NoNewJob(t *testing.T) {
 	ctx := context.Background()
 
 	// Pre-create a running Job (not yet Succeeded or Failed).
-	runningJob := newJob(packDeployJobName(peName), "infra-system", 0, 0)
+	runningJob := newJob(packDeployJobName(peName), "infra-system", 0, 0, pe)
 	if err := fakeClient.Create(ctx, runningJob); err != nil {
 		t.Fatalf("create running Job: %v", err)
 	}
@@ -418,6 +424,7 @@ func TestIdempotency_RunningJob_NoNewJob(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   buildTestScheme(t),
 		Recorder: clientevents.NewFakeRecorder(32),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	// First reconcile with running Job — should set Running=True, requeue 10s.

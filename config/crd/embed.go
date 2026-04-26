@@ -1,11 +1,12 @@
-// Package crd exposes the wrapper operator's controller-gen CRD YAML files
-// as an embedded filesystem. Imported by the Compiler binary to build the
-// CRD manifest bundle for compiler launch. conductor-schema.md §9.
+// Package crd previously embedded wrapper's own CRD YAML files.
+// After T-2B-9 migration, all wrapper CRDs (InfrastructureClusterPack,
+// InfrastructurePackExecution, InfrastructurePackInstance) are declared in
+// seam-core (infrastructure.ontai.dev). The compiler bundles them from
+// seam-core/config/crd directly.
+// This package is retained for structural consistency only.
 package crd
 
 import "embed"
 
-// FS contains all CRD YAML files from this directory.
-//
-//go:embed *.yaml
+// FS is an empty embedded filesystem. Wrapper's CRDs are now in seam-core.
 var FS embed.FS

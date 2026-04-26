@@ -6,6 +6,7 @@
 package controller_test
 
 import (
+	"context"
 	"testing"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -17,7 +18,18 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
 	seamv1alpha1 "github.com/ontai-dev/seam-core/api/v1alpha1"
+	"github.com/ontai-dev/wrapper/internal/controller"
 )
+
+// rbacAllowedStub is a RBACReadyChecker stub that always grants all permissions.
+// Use this in tests that need gate 5 (WrapperRunnerRBAC) to pass so they can reach
+// job-submission or post-job logic. The real gate requires a live API server SAR.
+func rbacAllowedStub(_ context.Context, _ *seamv1alpha1.InfrastructurePackExecution) (bool, string, error) {
+	return true, "", nil
+}
+
+// rbacAllowedStub is exported from the reconciler package as a type alias.
+var _ controller.RBACReadyChecker = rbacAllowedStub
 
 // buildTestScheme returns a scheme with clientgoscheme (includes batch/v1, core/v1)
 // and infrav1alpha1 registered.
@@ -98,9 +110,9 @@ func newPE(name, cpName, cpVersion string, cpUID types.UID, clusterRef, profileR
 func newRunnerConfig(clusterRef string, capCount int) *unstructured.Unstructured {
 	rc := &unstructured.Unstructured{}
 	rc.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "runner.ontai.dev",
+		Group:   "infrastructure.ontai.dev",
 		Version: "v1alpha1",
-		Kind:    "RunnerConfig",
+		Kind:    "InfrastructureRunnerConfig",
 	})
 	rc.SetName(clusterRef)
 	rc.SetNamespace("ont-system")
@@ -123,9 +135,9 @@ func newRunnerConfig(clusterRef string, capCount int) *unstructured.Unstructured
 func newTalosCluster(clusterRef string, conductorReady bool) *unstructured.Unstructured {
 	tc := &unstructured.Unstructured{}
 	tc.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "platform.ontai.dev",
+		Group:   "infrastructure.ontai.dev",
 		Version: "v1alpha1",
-		Kind:    "TalosCluster",
+		Kind:    "InfrastructureTalosCluster",
 	})
 	tc.SetName(clusterRef)
 	tc.SetNamespace("seam-tenant-" + clusterRef)
@@ -183,18 +195,29 @@ func newRBACProfile(name, namespace string, provisioned bool) *unstructured.Unst
 	return rp
 }
 
-// newJob returns a batchv1.Job with the given completion counters.
-func newJob(name, namespace string, succeeded, failed int32) *batchv1.Job {
-	return &batchv1.Job{
+// newJob returns a batchv1.Job with the given completion counters and an ownerReference
+// pointing to pe. The ownerRef is required so the stale-job detection in the reconciler
+// treats this Job as belonging to the current PackExecution (not a GC-lagged leftover).
+func newJob(name, namespace string, succeeded, failed int32, pe *seamv1alpha1.InfrastructurePackExecution) *batchv1.Job {
+	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion:         seamv1alpha1.GroupVersion.String(),
+				Kind:               "PackExecution",
+				Name:               pe.Name,
+				UID:                pe.UID,
+				Controller:         boolPtr(true),
+				BlockOwnerDeletion: boolPtr(true),
+			}},
 		},
 		Status: batchv1.JobStatus{
 			Succeeded: succeeded,
 			Failed:    failed,
 		},
 	}
+	return job
 }
 
 // newOperationResultPOR returns a PackOperationResult CR written by the

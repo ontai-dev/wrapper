@@ -111,7 +111,7 @@ func TestClusterPackReconciler_SignedTransitionsToAvailable(t *testing.T) {
 	cp := newClusterPack("signed-pack", "infra-system", "v1.0.0")
 	cp.Annotations = map[string]string{
 		"ontai.dev/pack-signature":           "base64sig==",
-		"infra.ontai.dev/spec-checksum-snapshot": cp.Spec.Checksum + "|" + cp.Spec.RegistryRef.URL + "|" + cp.Spec.RegistryRef.Digest + "|" + cp.Spec.Version,
+		"infrastructure.ontai.dev/spec-checksum-snapshot": cp.Spec.Checksum + "|" + cp.Spec.RegistryRef.URL + "|" + cp.Spec.RegistryRef.Digest + "|" + cp.Spec.Version,
 	}
 	fakeClient := fake.NewClientBuilder().WithScheme(s).WithObjects(cp).
 		WithStatusSubresource(&seamcorev1alpha1.InfrastructureClusterPack{}).Build()
@@ -187,7 +187,7 @@ func TestClusterPackReconciler_ImmutabilityViolation(t *testing.T) {
 	cp := newClusterPack("immutable-pack", "infra-system", "v1.0.0")
 	// Pre-set the snapshot annotation with a different checksum to simulate mutation.
 	cp.Annotations = map[string]string{
-		"infra.ontai.dev/spec-checksum-snapshot": "sha256:different|old-url|old-digest|v0.9.0",
+		"infrastructure.ontai.dev/spec-checksum-snapshot": "sha256:different|old-url|old-digest|v0.9.0",
 	}
 	fakeClient := fake.NewClientBuilder().WithScheme(s).WithObjects(cp).
 		WithStatusSubresource(&seamcorev1alpha1.InfrastructureClusterPack{}).Build()
@@ -224,7 +224,7 @@ func TestClusterPackReconciler_RevokedNoRequeue(t *testing.T) {
 	cp := newClusterPack("revoked-pack", "infra-system", "v1.0.0")
 	// Pre-set revoked condition and snapshot.
 	cp.Annotations = map[string]string{
-		"infra.ontai.dev/spec-checksum-snapshot": cp.Spec.Checksum + "|" + cp.Spec.RegistryRef.URL + "|" + cp.Spec.RegistryRef.Digest + "|" + cp.Spec.Version,
+		"infrastructure.ontai.dev/spec-checksum-snapshot": cp.Spec.Checksum + "|" + cp.Spec.RegistryRef.URL + "|" + cp.Spec.RegistryRef.Digest + "|" + cp.Spec.Version,
 	}
 	cp.Status.Conditions = []metav1.Condition{
 		{

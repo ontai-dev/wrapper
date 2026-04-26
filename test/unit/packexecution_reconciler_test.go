@@ -117,9 +117,9 @@ func newRBACProfile(name, namespace string, provisioned bool) *unstructured.Unst
 func newRunnerConfig(clusterName string, capCount int) *unstructured.Unstructured {
 	rc := &unstructured.Unstructured{}
 	rc.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "runner.ontai.dev",
+		Group:   "infrastructure.ontai.dev",
 		Version: "v1alpha1",
-		Kind:    "RunnerConfig",
+		Kind:    "InfrastructureRunnerConfig",
 	})
 	rc.SetName(clusterName)
 	rc.SetNamespace("ont-system")
@@ -142,9 +142,9 @@ func newRunnerConfig(clusterName string, capCount int) *unstructured.Unstructure
 func newTalosClusterWithConductorReady(clusterName string, conductorReady bool) *unstructured.Unstructured {
 	tc := &unstructured.Unstructured{}
 	tc.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "platform.ontai.dev",
+		Group:   "infrastructure.ontai.dev",
 		Version: "v1alpha1",
-		Kind:    "TalosCluster",
+		Kind:    "InfrastructureTalosCluster",
 	})
 	tc.SetName(clusterName)
 	tc.SetNamespace("seam-tenant-" + clusterName)
@@ -174,6 +174,15 @@ func reconcilePE(t *testing.T, r *controller.PackExecutionReconciler, pe *seamco
 	return result
 }
 
+// rbacAllowedStub is a RBACReadyChecker stub that always grants all permissions.
+// Required for tests that need gate 5 (WrapperRunnerRBAC) to pass so they can reach
+// job-submission or post-job logic. The real gate requires a live API server SAR.
+func rbacAllowedStub(_ context.Context, _ *seamcorev1alpha1.InfrastructurePackExecution) (bool, string, error) {
+	return true, "", nil
+}
+
+var _ controller.RBACReadyChecker = rbacAllowedStub
+
 // TestPackExecutionReconciler_Gate1_SignaturePending verifies gate 1 requeues when
 // the ClusterPack is not yet signed (gate 0 already cleared via ConductorReady=True).
 func TestPackExecutionReconciler_Gate1_SignaturePending(t *testing.T) {
@@ -198,6 +207,7 @@ func TestPackExecutionReconciler_Gate1_SignaturePending(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   s,
 		Recorder: clientevents.NewFakeRecorder(10),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	result := reconcilePE(t, r, pe)
@@ -249,6 +259,7 @@ func TestPackExecutionReconciler_Gate2_PackRevoked(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   s,
 		Recorder: clientevents.NewFakeRecorder(10),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	result := reconcilePE(t, r, pe)
@@ -298,6 +309,7 @@ func TestPackExecutionReconciler_Gate3_SnapshotOutOfSync(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   s,
 		Recorder: clientevents.NewFakeRecorder(10),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	result := reconcilePE(t, r, pe)
@@ -346,6 +358,7 @@ func TestPackExecutionReconciler_Gate4_RBACProfileNotProvisioned(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   s,
 		Recorder: clientevents.NewFakeRecorder(10),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	result := reconcilePE(t, r, pe)
@@ -361,6 +374,53 @@ func TestPackExecutionReconciler_Gate4_RBACProfileNotProvisioned(t *testing.T) {
 	rbacCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypeRBACProfileNotProvisioned)
 	if rbacCond == nil || rbacCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected RBACProfileNotProvisioned=True")
+	}
+}
+
+// TestPackExecutionReconciler_Gate4_AbsentProfileAllowsJobSubmission verifies that
+// when the RBACProfile does not yet exist (Conductor Job will create it via rbac-intake),
+// gate 4 clears and the Job is submitted. This prevents a deadlock where gate 4 would
+// permanently block first-deploy because the profile only exists after the Job runs.
+func TestPackExecutionReconciler_Gate4_AbsentProfileAllowsJobSubmission(t *testing.T) {
+	s := newPackExecutionScheme(t)
+	cp := newSignedClusterPack("my-pack", "infra-system", "v1.0.0")
+	pe := newPackExecution("exec-absent-profile", "infra-system", "my-pack", "v1.0.0", "cluster-a", "profile-absent")
+	ps := newPermissionSnapshot("snapshot-cluster-a", "seam-system", true)
+	tc := newTalosClusterWithConductorReady("cluster-a", true)
+	rc := newRunnerConfig("cluster-a", 1)
+	// No RBACProfile created — profile absent.
+
+	fakeClient := fake.NewClientBuilder().WithScheme(s).
+		WithObjects(cp, pe).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructurePackExecution{}, &seamcorev1alpha1.InfrastructureClusterPack{}).
+		Build()
+	if err := fakeClient.Create(context.Background(), ps); err != nil {
+		t.Fatalf("create PermissionSnapshot: %v", err)
+	}
+	if err := fakeClient.Create(context.Background(), tc); err != nil {
+		t.Fatalf("create TalosCluster: %v", err)
+	}
+	if err := fakeClient.Create(context.Background(), rc); err != nil {
+		t.Fatalf("create RunnerConfig: %v", err)
+	}
+
+	r := &controller.PackExecutionReconciler{
+		Client:      fakeClient,
+		Scheme:      s,
+		Recorder:    clientevents.NewFakeRecorder(10),
+		RBACChecker: rbacAllowedStub,
+	}
+
+	reconcilePE(t, r, pe)
+
+	// A Job must have been submitted — gate 4 did not block on absent profile.
+	jobList := &unstructured.UnstructuredList{}
+	jobList.SetGroupVersionKind(schema.GroupVersionKind{Group: "batch", Version: "v1", Kind: "JobList"})
+	if err := fakeClient.List(context.Background(), jobList, client.InNamespace("infra-system")); err != nil {
+		t.Fatalf("list Jobs: %v", err)
+	}
+	if len(jobList.Items) == 0 {
+		t.Error("expected a pack-deploy Job to be submitted when RBACProfile is absent; got none")
 	}
 }
 
@@ -395,6 +455,7 @@ func TestPackExecutionReconciler_AllGatesClear_JobSubmitted(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   s,
 		Recorder: clientevents.NewFakeRecorder(10),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	result := reconcilePE(t, r, pe)
@@ -454,6 +515,7 @@ func TestPackExecutionReconciler_LineageSyncedInitialized(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   s,
 		Recorder: clientevents.NewFakeRecorder(10),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	reconcilePE(t, r, pe)
@@ -490,6 +552,7 @@ func TestPackExecutionReconciler_Gate0_ConductorReadyAbsent(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   s,
 		Recorder: clientevents.NewFakeRecorder(10),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	result := reconcilePE(t, r, pe)
@@ -535,6 +598,7 @@ func TestPackExecutionReconciler_Gate0_ConductorReadyFalse(t *testing.T) {
 		Client:   fakeClient,
 		Scheme:   s,
 		Recorder: clientevents.NewFakeRecorder(10),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	result := reconcilePE(t, r, pe)
@@ -580,6 +644,7 @@ func TestPackExecutionReconciler_Gate0_ConductorReadyTrue_ProceedsToSignatureGat
 		Client:   fakeClient,
 		Scheme:   s,
 		Recorder: clientevents.NewFakeRecorder(10),
+		RBACChecker: rbacAllowedStub,
 	}
 
 	result := reconcilePE(t, r, pe)
