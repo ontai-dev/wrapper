@@ -95,6 +95,15 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		// Falling through ensures status conditions are set in this reconcile pass.
 	}
 
+	// Step A2 — Rollback check. Evaluated before the spec-snapshot annotation so that
+	// a Governor-authorized rollback (spec.rollbackToRevision > 0) can patch the spec
+	// and clear the annotation without triggering the immutability gate. On the next
+	// reconcile pass the annotation is absent, gets re-recorded from the rolled-back
+	// spec, and normal reconciliation proceeds. wrapper-schema.md §6.2.
+	if cp.Spec.RollbackToRevision > 0 {
+		return r.handleRollback(ctx, cp)
+	}
+
 	// Step B — Record spec snapshot annotation on first reconcile, BEFORE setting
 	// up the deferred status patch. This must happen first because calling
 	// r.Client.Patch() after the status patch setup would overwrite the in-memory
@@ -284,6 +293,95 @@ func (r *ClusterPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			"PackExecution %s created in %s for pack delivery to cluster %s.", peName, tenantNS, clusterName)
 	}
 
+	return ctrl.Result{}, nil
+}
+
+// handleRollback processes a Governor-initiated rollback request (spec.rollbackToRevision > 0).
+// It finds the current POR for this ClusterPack, validates that rollbackToRevision == revision-1
+// (one-step only), reads the previous-state fields, patches the ClusterPack spec back to the
+// previous artifact version, clears the spec-snapshot annotation (so the immutability check
+// re-records the rolled-back state on the next reconcile), and clears rollbackToRevision.
+// wrapper-schema.md §6.2. seam-core-schema.md §7.8.
+func (r *ClusterPackReconciler) handleRollback(ctx context.Context, cp *seamcorev1alpha1.InfrastructureClusterPack) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	// Find the current POR labeled ontai.dev/cluster-pack=cp.Name in this namespace.
+	porList := &seamcorev1alpha1.PackOperationResultList{}
+	if err := r.Client.List(ctx, porList,
+		client.InNamespace(cp.Namespace),
+		client.MatchingLabels{"ontai.dev/cluster-pack": cp.Name},
+	); err != nil {
+		return ctrl.Result{}, fmt.Errorf("handleRollback: list PORs for %s: %w", cp.Name, err)
+	}
+
+	// Find the POR with the highest revision (the current one).
+	var currentPOR *seamcorev1alpha1.PackOperationResult
+	var highestRevision int64
+	for i := range porList.Items {
+		item := &porList.Items[i]
+		if item.Spec.Revision > highestRevision {
+			highestRevision = item.Spec.Revision
+			currentPOR = item
+		}
+	}
+
+	if currentPOR == nil {
+		logger.Info("handleRollback: no POR found for ClusterPack — cannot rollback, clearing field",
+			"clusterPack", cp.Name, "namespace", cp.Namespace)
+		return r.clearRollbackField(ctx, cp)
+	}
+
+	targetRevision := cp.Spec.RollbackToRevision
+	if targetRevision != highestRevision-1 {
+		logger.Info("handleRollback: only one-step rollback supported (N-1) — clearing field",
+			"clusterPack", cp.Name, "requestedRevision", targetRevision, "currentRevision", highestRevision)
+		return r.clearRollbackField(ctx, cp)
+	}
+
+	prevVersion := currentPOR.Spec.PreviousClusterPackVersion
+	prevRBACDigest := currentPOR.Spec.PreviousRBACDigest
+	prevWorkloadDigest := currentPOR.Spec.PreviousWorkloadDigest
+
+	if prevVersion == "" {
+		logger.Info("handleRollback: no previous version in POR — this is the first revision, cannot rollback",
+			"clusterPack", cp.Name, "revision", highestRevision)
+		return r.clearRollbackField(ctx, cp)
+	}
+
+	logger.Info("handleRollback: rolling back ClusterPack",
+		"clusterPack", cp.Name, "fromVersion", cp.Spec.Version,
+		"toVersion", prevVersion, "targetRevision", targetRevision)
+
+	// Patch spec back to previous version + digests, clear rollbackToRevision,
+	// and remove the spec-snapshot annotation so the immutability check re-records
+	// the rolled-back state on the next reconcile pass.
+	const specSnapshotAnnotation = "infrastructure.ontai.dev/spec-checksum-snapshot"
+	patch := client.MergeFrom(cp.DeepCopy())
+	cp.Spec.Version = prevVersion
+	cp.Spec.RBACDigest = prevRBACDigest
+	cp.Spec.WorkloadDigest = prevWorkloadDigest
+	cp.Spec.RollbackToRevision = 0
+	if cp.Annotations != nil {
+		delete(cp.Annotations, specSnapshotAnnotation)
+	}
+	if err := r.Client.Patch(ctx, cp, patch); err != nil {
+		return ctrl.Result{}, fmt.Errorf("handleRollback: patch ClusterPack spec: %w", err)
+	}
+
+	r.Recorder.Eventf(cp, nil, corev1.EventTypeNormal, "RollbackApplied", "RollbackApplied",
+		"ClusterPack rolled back from %s to %s (POR revision %d).", cp.Spec.Version, prevVersion, targetRevision)
+	logger.Info("handleRollback: spec patched, normal reconcile will create PackExecution for rolled-back version",
+		"clusterPack", cp.Name, "version", prevVersion)
+	return ctrl.Result{}, nil
+}
+
+// clearRollbackField resets spec.rollbackToRevision to 0 when rollback cannot proceed.
+func (r *ClusterPackReconciler) clearRollbackField(ctx context.Context, cp *seamcorev1alpha1.InfrastructureClusterPack) (ctrl.Result, error) {
+	patch := client.MergeFrom(cp.DeepCopy())
+	cp.Spec.RollbackToRevision = 0
+	if err := r.Client.Patch(ctx, cp, patch); err != nil {
+		return ctrl.Result{}, fmt.Errorf("clearRollbackField: patch ClusterPack: %w", err)
+	}
 	return ctrl.Result{}, nil
 }
 

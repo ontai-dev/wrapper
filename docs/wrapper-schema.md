@@ -310,10 +310,28 @@ Stateful defaults (require explicit human approval to override):
 
 ### 6.2 Rollback
 
-PackExecution referencing a previous ClusterPack version. The previous version
-must still be Available and not Revoked. Signing was already performed when the
-version was first applied. Same diff engine and execution order apply. No special
-reverse logic.
+Rollback to the previous version is triggered by setting `spec.rollbackToRevision`
+on the ClusterPack CR to the target POR revision number (N-1 relative to the
+current revision). Only one-step rollback per invocation is supported.
+
+**Mechanism:**
+
+The current PackOperationResult (POR) embeds `previousClusterPackVersion`,
+`previousRBACDigest`, and `previousWorkloadDigest` copied from the superseded
+predecessor POR before it was deleted. This makes the prior artifact state
+self-contained in the current POR without retaining deleted objects.
+
+When `spec.rollbackToRevision > 0`, the ClusterPackReconciler:
+1. Lists PORs labeled `ontai.dev/cluster-pack={cp.Name}` in the ClusterPack namespace.
+2. Finds the current POR (highest revision) and validates `rollbackToRevision == revision - 1`.
+3. Reads `previousClusterPackVersion`, `previousRBACDigest`, `previousWorkloadDigest`.
+4. Patches `ClusterPack.spec`: sets `version`, `rbacDigest`, `workloadDigest` to previous values; clears `rollbackToRevision`.
+5. Removes the `infrastructure.ontai.dev/spec-checksum-snapshot` annotation so the immutability check re-records the rolled-back state on the next reconcile pass.
+6. Returns -- the version change triggers normal PackExecution creation.
+
+The resulting PackExecution runs a normal pack-deploy Job against the previous OCI
+layer digests. The new POR records `upgradeDirection=Rollback`. The PackReceipt on
+the tenant cluster is overwritten with the previous version's resource inventory.
 
 ---
 
