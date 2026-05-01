@@ -334,6 +334,21 @@ func (r *ClusterPackReconciler) handleClusterPackDeletion(ctx context.Context, c
 			"packExecution", pe.Name, "namespace", pe.Namespace, "clusterPack", cp.Name)
 	}
 
+	// 2.5. Delete DriftSignals for each target cluster.
+	// Convention: DriftSignal name = "drift-{cp.Name}", namespace = "seam-tenant-{clusterName}".
+	for _, clusterName := range cp.Spec.TargetClusters {
+		tenantNS := "seam-tenant-" + clusterName
+		signalName := "drift-" + cp.Name
+		signal := &seamcorev1alpha1.DriftSignal{
+			ObjectMeta: metav1.ObjectMeta{Name: signalName, Namespace: tenantNS},
+		}
+		if err := r.Client.Delete(ctx, signal); err != nil && !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, fmt.Errorf("delete DriftSignal %s/%s: %w", tenantNS, signalName, err)
+		}
+		logger.Info("deleted DriftSignal during ClusterPack cleanup",
+			"driftSignal", signalName, "namespace", tenantNS, "clusterPack", cp.Name)
+	}
+
 	// 3. Remove the finalizer so the API server can delete the ClusterPack object.
 	cp.Finalizers = removeString(cp.Finalizers, clusterPackFinalizer)
 	if err := r.Client.Update(ctx, cp); err != nil {
