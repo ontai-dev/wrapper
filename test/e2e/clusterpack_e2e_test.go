@@ -91,16 +91,16 @@ var _ = Describe("Step 3: ClusterPack deployment end-to-end", func() {
 	})
 })
 
-var _ = Describe("Step 4: PackOperationResult single-active-revision", func() {
+var _ = Describe("Step 4: PackOperationResult N-step retention", func() {
 	It("second deployment writes POR revision=2 with previousRevisionRef pointing to -r1", func() {
 		validatePORRevision2(context.Background(), mgmtClient, mgmtClusterName, certManagerPackName, deployTimeout, pollInterval)
 	})
 
-	It("revision=1 POR is deleted after revision=2 is written", func() {
-		validatePORPredecessorDeleted(context.Background(), mgmtClient, mgmtClusterName, deployTimeout, pollInterval)
+	It("revision=1 POR is labeled ontai.dev/superseded=true after revision=2 is written (N-step retention)", func() {
+		validatePORPredecessorSuperseded(context.Background(), mgmtClient, mgmtClusterName, deployTimeout, pollInterval)
 	})
 
-	It("exactly one PackOperationResult exists in seam-tenant-{cluster} after second deployment", func() {
+	It("exactly one non-superseded PackOperationResult exists in seam-tenant-{cluster} after second deployment", func() {
 		validateSingleActivePOR(context.Background(), mgmtClient, mgmtClusterName, deployTimeout, pollInterval)
 	})
 })
@@ -303,36 +303,40 @@ func validatePORRevision2(
 		"revision=2 POR name must follow pack-deploy-result-{peName}-r2 convention")
 }
 
-// validatePORPredecessorDeleted confirms that after revision=2 is written, the
-// revision=1 CR is deleted (single-active-revision invariant).
-func validatePORPredecessorDeleted(
+// validatePORPredecessorSuperseded confirms that after revision=2 is written, the
+// revision=1 CR is labeled ontai.dev/superseded=true and retained for N-step rollback.
+// seam-core-schema.md §7.8: superseded PORs are never deleted by the writer.
+func validatePORPredecessorSuperseded(
 	ctx context.Context,
 	cl *e2ehelpers.ClusterClient,
 	clusterName string,
 	timeout, interval time.Duration,
 ) {
 	tenantNS := "seam-tenant-" + clusterName
-	By(fmt.Sprintf("confirming revision=1 POR deleted after revision=2 written in %s", tenantNS))
+	By(fmt.Sprintf("confirming revision=1 POR retained with ontai.dev/superseded=true in %s", tenantNS))
 	Eventually(func() bool {
 		list, err := cl.Dynamic.Resource(packOperationResultGVR).Namespace(tenantNS).
-			List(ctx, metav1.ListOptions{})
-		if err != nil {
+			List(ctx, metav1.ListOptions{
+				LabelSelector: "ontai.dev/superseded=true",
+			})
+		if err != nil || len(list.Items) == 0 {
 			return false
 		}
 		for _, item := range list.Items {
 			spec, _ := item.Object["spec"].(map[string]interface{})
 			rev, _ := spec["revision"].(int64)
 			if rev == 1 {
-				return false
+				return true
 			}
 		}
-		return true
+		return false
 	}, timeout, interval).Should(BeTrue(),
-		"revision=1 POR still present after revision=2 written -- single-active-revision invariant violated in %s", tenantNS)
+		"revision=1 POR with ontai.dev/superseded=true not found in %s -- N-step retention invariant violated", tenantNS)
 }
 
-// validateSingleActivePOR confirms exactly one PackOperationResult exists in the
-// namespace after the second deployment cycle completes.
+// validateSingleActivePOR confirms exactly one non-superseded PackOperationResult
+// exists in the namespace after the second deployment cycle. Superseded PORs are
+// retained for N-step rollback and are excluded from this count.
 func validateSingleActivePOR(
 	ctx context.Context,
 	cl *e2ehelpers.ClusterClient,
@@ -340,14 +344,16 @@ func validateSingleActivePOR(
 	timeout, interval time.Duration,
 ) {
 	tenantNS := "seam-tenant-" + clusterName
-	By(fmt.Sprintf("confirming exactly one POR exists in %s on cluster %s", tenantNS, cl.Name))
+	By(fmt.Sprintf("confirming exactly one active (non-superseded) POR in %s on cluster %s", tenantNS, cl.Name))
 	Eventually(func() int {
 		list, err := cl.Dynamic.Resource(packOperationResultGVR).Namespace(tenantNS).
-			List(ctx, metav1.ListOptions{})
+			List(ctx, metav1.ListOptions{
+				LabelSelector: "!ontai.dev/superseded",
+			})
 		if err != nil {
 			return -1
 		}
 		return len(list.Items)
 	}, timeout, interval).Should(Equal(1),
-		"single-active-revision violated: expected 1 POR in %s, got != 1", tenantNS)
+		"single-active-POR violated: expected 1 non-superseded POR in %s, got != 1", tenantNS)
 }
