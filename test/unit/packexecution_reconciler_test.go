@@ -737,9 +737,9 @@ func TestPackExecutionReconciler_Gate0_RunnerConfigCapabilitiesAppear(t *testing
 	rcKey := types.NamespacedName{Name: "ccs-test", Namespace: "ont-system"}
 	rcLive := &unstructured.Unstructured{}
 	rcLive.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "runner.ontai.dev",
+		Group:   "infrastructure.ontai.dev",
 		Version: "v1alpha1",
-		Kind:    "RunnerConfig",
+		Kind:    "InfrastructureRunnerConfig",
 	})
 	if err := cl.Get(context.Background(), rcKey, rcLive); err != nil {
 		t.Fatalf("get RunnerConfig: %v", err)
@@ -755,7 +755,7 @@ func TestPackExecutionReconciler_Gate0_RunnerConfigCapabilitiesAppear(t *testing
 	}
 	// Verify capabilities stored before proceeding.
 	rcCheck := &unstructured.Unstructured{}
-	rcCheck.SetGroupVersionKind(schema.GroupVersionKind{Group: "runner.ontai.dev", Version: "v1alpha1", Kind: "RunnerConfig"})
+	rcCheck.SetGroupVersionKind(schema.GroupVersionKind{Group: "infrastructure.ontai.dev", Version: "v1alpha1", Kind: "InfrastructureRunnerConfig"})
 	if err := cl.Get(context.Background(), rcKey, rcCheck); err != nil {
 		t.Fatalf("get RunnerConfig after update: %v", err)
 	}
