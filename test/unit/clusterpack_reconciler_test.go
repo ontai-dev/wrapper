@@ -6,6 +6,7 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -214,6 +215,56 @@ func TestClusterPackReconciler_ImmutabilityViolation(t *testing.T) {
 	}
 	if immCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected ImmutabilityViolation=True, got %v", immCond.Status)
+	}
+}
+
+// TestClusterPackReconciler_DeletionCascadesDriftSignal verifies that handleClusterPackDeletion
+// deletes the DriftSignal "drift-{cp.Name}" from "seam-tenant-{clusterName}" for each
+// target cluster, alongside PackInstances and PackExecutions.
+func TestClusterPackReconciler_DeletionCascadesDriftSignal(t *testing.T) {
+	s := newClusterPackScheme(t)
+
+	clusterName := "ccs-dev"
+	tenantNS := "seam-tenant-" + clusterName
+	cpName := "nginx-pack"
+
+	cp := newClusterPack(cpName, "infra-system", "v1.0.0")
+	cp.Spec.TargetClusters = []string{clusterName}
+	now := metav1.Now()
+	cp.DeletionTimestamp = &now
+
+	signal := &seamcorev1alpha1.DriftSignal{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "drift-" + cpName,
+			Namespace: tenantNS,
+		},
+		Spec: seamcorev1alpha1.DriftSignalSpec{
+			State: seamcorev1alpha1.DriftSignalStatePending,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(s).
+		WithObjects(cp, signal).
+		WithStatusSubresource(&seamcorev1alpha1.InfrastructureClusterPack{}).
+		Build()
+	r := &controller.ClusterPackReconciler{
+		Client:   fakeClient,
+		Scheme:   s,
+		Recorder: clientevents.NewFakeRecorder(10),
+	}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: cp.Name, Namespace: cp.Namespace},
+	})
+	if err != nil {
+		t.Fatalf("Reconcile returned unexpected error: %v", err)
+	}
+
+	remaining := &seamcorev1alpha1.DriftSignal{}
+	getErr := fakeClient.Get(context.Background(),
+		client.ObjectKey{Name: "drift-" + cpName, Namespace: tenantNS}, remaining)
+	if !apierrors.IsNotFound(getErr) {
+		t.Errorf("expected DriftSignal to be deleted, got: %v", getErr)
 	}
 }
 
