@@ -87,7 +87,7 @@ spec:
 
 		DeferCleanup(func() {
 			By("cleanup: deleting synthetic superseded POR")
-			mgmtClient.Dynamic.Resource(packOperationResultGVR).Namespace(ns).
+			_ = mgmtClient.Dynamic.Resource(packOperationResultGVR).Namespace(ns).
 				Delete(context.Background(), fakePORName, metav1.DeleteOptions{})
 		})
 
@@ -101,7 +101,7 @@ spec:
 		DeferCleanup(func() {
 			By("cleanup: clearing rollbackToRevision on ClusterPack in case of test failure")
 			clearPatch := []byte(`{"spec":{"rollbackToRevision":0}}`)
-			mgmtClient.Dynamic.Resource(clusterPackGVR).Namespace(ns).
+			_, _ = mgmtClient.Dynamic.Resource(clusterPackGVR).Namespace(ns).
 				Patch(context.Background(), packName, types.MergePatchType, clearPatch, metav1.PatchOptions{})
 		})
 
