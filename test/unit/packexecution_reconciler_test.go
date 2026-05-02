@@ -710,7 +710,7 @@ func TestPackExecutionReconciler_Gate0_RunnerConfigCapabilitiesAppear(t *testing
 	r := &controller.PackExecutionReconciler{
 		Client:   cl,
 		Scheme:   s,
-		Recorder: record.NewFakeRecorder(16),
+		Recorder: clientevents.NewFakeRecorder(16),
 	}
 
 	// First reconcile — gate 0 must block.
@@ -723,11 +723,11 @@ func TestPackExecutionReconciler_Gate0_RunnerConfigCapabilitiesAppear(t *testing
 	if result.RequeueAfter == 0 {
 		t.Error("expected non-zero RequeueAfter when gate 0 (ConductorReady) not cleared")
 	}
-	updated := &infrav1alpha1.PackExecution{}
+	updated := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := cl.Get(context.Background(), types.NamespacedName{Name: "cilium-exec", Namespace: "seam-tenant-ccs-test"}, updated); err != nil {
 		t.Fatalf("get PackExecution: %v", err)
 	}
-	waitCond := infrav1alpha1.FindCondition(updated.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionWaiting)
+	waitCond := conditions.FindCondition(updated.Status.Conditions, conditions.ConditionTypePackExecutionWaiting)
 	if waitCond == nil || waitCond.Status != metav1.ConditionTrue {
 		t.Error("expected Waiting=True when gate 0 not cleared")
 	}
@@ -771,14 +771,14 @@ func TestPackExecutionReconciler_Gate0_RunnerConfigCapabilitiesAppear(t *testing
 	if err != nil {
 		t.Fatalf("second reconcile error: %v", err)
 	}
-	updated2 := &infrav1alpha1.PackExecution{}
+	updated2 := &seamcorev1alpha1.InfrastructurePackExecution{}
 	if err := cl.Get(context.Background(), types.NamespacedName{Name: "cilium-exec", Namespace: "seam-tenant-ccs-test"}, updated2); err != nil {
 		t.Fatalf("get PackExecution after second reconcile: %v", err)
 	}
 	// Gate 0 cleared — reconciler sets Waiting=False. The condition still carries
 	// ReasonAwaitingConductorReady but with Status=False to record the clear event.
-	waitCond2 := infrav1alpha1.FindCondition(updated2.Status.Conditions, infrav1alpha1.ConditionTypePackExecutionWaiting)
-	if waitCond2 != nil && waitCond2.Status == metav1.ConditionTrue && waitCond2.Reason == infrav1alpha1.ReasonAwaitingConductorReady {
+	waitCond2 := conditions.FindCondition(updated2.Status.Conditions, conditions.ConditionTypePackExecutionWaiting)
+	if waitCond2 != nil && waitCond2.Status == metav1.ConditionTrue && waitCond2.Reason == conditions.ReasonAwaitingConductorReady {
 		t.Error("gate 0 must clear after capabilities published; Waiting=True/AwaitingConductorReady must not remain set")
 	}
 	_ = result2
